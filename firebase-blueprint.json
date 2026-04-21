@@ -38,7 +38,18 @@
         "specialties": { "type": "array", "items": { "type": "string" } },
         "available": { "type": "boolean" },
         "rating": { "type": "number" },
-        "reviewCount": { "type": "integer" }
+        "reviewCount": { "type": "integer" },
+        "workingHours": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "start": { "type": "string" },
+              "end": { "type": "string" },
+              "enabled": { "type": "boolean" }
+            }
+          }
+        }
       },
       "required": ["userId", "available"]
     },
@@ -58,6 +69,20 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["customerId", "barberId", "serviceId", "startTime", "endTime", "status", "totalPrice", "createdAt"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Customer feedback for a completed barber service",
+      "type": "object",
+      "properties": {
+        "bookingId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "barberId": { "type": "string" },
+        "rating": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["bookingId", "customerId", "barberId", "rating", "createdAt"]
     }
   },
   "firestore": {
@@ -76,6 +101,10 @@
     "/bookings/{bookingId}": {
       "schema": { "$ref": "#/entities/Booking" },
       "description": "Appointment bookings"
+    },
+    "/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/Review" },
+      "description": "Customer reviews and ratings"
     }
   }
 }

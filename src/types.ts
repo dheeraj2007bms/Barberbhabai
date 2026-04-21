@@ -21,6 +21,12 @@ export interface Service {
   category: string;
 }
 
+export interface WorkingHour {
+  start: string;
+  end: string;
+  enabled: boolean;
+}
+
 export interface BarberProfile {
   id: string;
   userId: string;
@@ -29,8 +35,11 @@ export interface BarberProfile {
   available: boolean;
   rating: number;
   reviewCount: number;
-  displayName?: string; // Denormalized for ease
-  photoURL?: string;    // Denormalized for ease
+  displayName?: string;
+  photoURL?: string;
+  workingHours?: {
+    [key: string]: WorkingHour;
+  };
 }
 
 export type BookingStatus = 'pending' | 'confirmed' | 'cancelled' | 'completed';

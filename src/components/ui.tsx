@@ -57,15 +57,16 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
   )
 );
 
-export const Badge = ({ children, variant = 'default' }: { children: React.ReactNode; variant?: 'default' | 'success' | 'warning' | 'error' }) => {
+export const Badge = ({ children, variant = 'default', className, ...props }: { children: React.ReactNode; variant?: 'default' | 'success' | 'warning' | 'error' | 'outline', className?: string, [key: string]: any }) => {
   const styles = {
     default: 'bg-stone-100 text-stone-500',
     success: 'bg-green-500 text-white',
     warning: 'bg-yellow-500 text-white',
     error: 'bg-red-500 text-white',
+    outline: 'border border-stone-200 text-stone-400 bg-transparent',
   };
   return (
-    <span className={cn('px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.2em]', styles[variant])}>
+    <span className={cn('px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.2em]', styles[variant], className)} {...props}>
       {children}
     </span>
   );

@@ -8,6 +8,7 @@ interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
+  signingIn: boolean;
   signIn: () => Promise<void>;
   logout: () => Promise<void>;
   updateRole: (role: UserRole) => Promise<void>;
@@ -19,6 +20,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [signingIn, setSigningIn] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -40,6 +42,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = async () => {
+    if (signingIn) return;
+    setSigningIn(true);
     const provider = new GoogleAuthProvider();
     try {
       const result = await signInWithPopup(auth, provider);
@@ -50,8 +54,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         setProfile(profileDoc.data() as UserProfile);
       }
-    } catch (error) {
-      console.error('Sign in error', error);
+    } catch (error: any) {
+      if (error.code === 'auth/cancelled-popup-request' || error.code === 'auth/popup-closed-by-user') {
+        // Expected user actions or environment cleanup - don't log as error
+        console.log('Sign in cancelled');
+      } else {
+        console.error('Sign in error', error);
+      }
+    } finally {
+      setSigningIn(false);
     }
   };
 
@@ -74,6 +85,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     
     // If barber, initialize barber profile too
     if (role === 'barber') {
+      const defaultWorkingHours = {
+        monday: { start: '09:00', end: '17:00', enabled: true },
+        tuesday: { start: '09:00', end: '17:00', enabled: true },
+        wednesday: { start: '09:00', end: '17:00', enabled: true },
+        thursday: { start: '09:00', end: '17:00', enabled: true },
+        friday: { start: '09:00', end: '17:00', enabled: true },
+        saturday: { start: '10:00', end: '14:00', enabled: true },
+        sunday: { start: '10:00', end: '14:00', enabled: false },
+      };
       await setDoc(doc(db, 'barbers', user.uid), {
         userId: user.uid,
         available: true,
@@ -81,12 +101,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         reviewCount: 0,
         specialties: ['Classic Cut'],
         bio: 'Expert barber from TrimTime',
+        workingHours: defaultWorkingHours,
       });
     }
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, logout, updateRole }}>
+    <AuthContext.Provider value={{ user, profile, loading, signingIn, signIn, logout, updateRole }}>
       {children}
     </AuthContext.Provider>
   );
