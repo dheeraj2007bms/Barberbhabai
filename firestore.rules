@@ -1,0 +1,101 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email == 'pannurudheeraj2007@gmail.com';
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // --- Entity Specific Helpers ---
+
+    function isValidUser(data) {
+      return data.uid == request.auth.uid &&
+             data.email is string &&
+             data.role in ['customer', 'barber'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidService(data) {
+      return data.name is string && data.name.size() < 100 &&
+             data.price is number && data.price >= 0 &&
+             data.durationMinutes is int && data.durationMinutes > 0;
+    }
+
+    function isValidBooking(data) {
+      return data.customerId == request.auth.uid &&
+             data.status == 'pending' &&
+             data.totalPrice is number &&
+             data.startTime is timestamp &&
+             data.endTime is timestamp &&
+             data.createdAt == request.time;
+    }
+
+    // --- Match Rules ---
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && (resource.data.role == 'barber' || isOwner(userId));
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if isOwner(userId) && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'phoneNumber']);
+    }
+
+    match /services/{serviceId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /barbers/{barberId} {
+      allow read: if true;
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && existing().userId == request.auth.uid && 
+                      incoming().userId == existing().userId &&
+                      incoming().diff(existing()).affectedKeys().hasOnly(['bio', 'specialties', 'available', 'rating', 'reviewCount']);
+    }
+
+    match /bookings/{bookingId} {
+      allow get: if isSignedIn() && (isOwner(existing().customerId) || isOwner(existing().barberId));
+      allow list: if isSignedIn() && (resource.data.customerId == request.auth.uid || resource.data.barberId == request.auth.uid);
+      allow create: if isVerified() && isValidBooking(incoming());
+      
+      allow update: if isSignedIn() && (
+        // Customer can cancel
+        (isOwner(existing().customerId) && incoming().status == 'cancelled' && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+        // Barber can confirm or complete
+        (isOwner(existing().barberId) && incoming().status in ['confirmed', 'completed'] && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+      );
+    }
+  }
+}
