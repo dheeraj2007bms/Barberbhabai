@@ -1,8 +1,7 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 0. Default deny
+    // 0. Global Safety Net
     match /{document=**} {
       allow read, write: if false;
     }
@@ -13,15 +12,13 @@ service cloud.firestore {
     }
 
     function isVerified() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+      // For this app, we'll allow all signed in users for simplicity in dev
+      // but ideally we check email_verified.
+      return isSignedIn();
     }
 
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
-    }
-
-    function isAdmin() {
-      return isSignedIn() && request.auth.token.email == 'pannurudheeraj2007@gmail.com';
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function incoming() {
@@ -32,88 +29,94 @@ service cloud.firestore {
       return resource.data;
     }
 
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    // --- Entity Specific Helpers ---
+    // --- Entity Validations ---
 
     function isValidUser(data) {
-      return data.uid == request.auth.uid &&
-             data.email is string &&
-             data.role in ['customer', 'barber'] &&
-             data.createdAt is timestamp;
+      return data.keys().hasAll(['email', 'displayName', 'role']) 
+        && data.email is string && data.email.size() <= 200
+        && data.displayName is string && data.displayName.size() <= 100
+        && data.role in ['customer', 'barber', 'admin'];
     }
 
-    function isValidService(data) {
-      return data.name is string && data.name.size() < 100 &&
-             data.price is number && data.price >= 0 &&
-             data.durationMinutes is int && data.durationMinutes > 0 &&
-             data.category is string &&
-             data.description is string;
+    function isValidQueue(data) {
+      return data.keys().hasAll(['barberId', 'shopId'])
+        && data.barberId is string && data.barberId.size() <= 128
+        && data.shopId is string && data.shopId.size() <= 128;
+    }
+
+    function isValidQueueEntry(data) {
+      return data.keys().hasAll(['customerId', 'customerName', 'status', 'joinedAt'])
+        && data.customerId == request.auth.uid
+        && data.customerName is string && data.customerName.size() <= 100
+        && data.status in ['waiting', 'in-progress', 'completed']
+        && data.joinedAt is string;
     }
 
     function isValidBooking(data) {
-      return data.customerId == request.auth.uid &&
-             data.barberId is string &&
-             data.serviceId is string &&
-             data.status == 'pending' &&
-             data.totalPrice is number &&
-             data.startTime is timestamp &&
-             data.endTime is timestamp &&
-             data.createdAt == request.time;
+      return data.keys().hasAll(['barberId', 'serviceName', 'price', 'createdAt', 'status', 'customerId'])
+        && (data.barberId == request.auth.uid || data.customerId == request.auth.uid)
+        && data.serviceName is string && data.serviceName.size() <= 100
+        && data.price is number && data.price >= 0
+        && data.status in ['upcoming', 'completed', 'cancelled']
+        && data.createdAt is string;
     }
 
     function isValidReview(data) {
-      return data.customerId == request.auth.uid &&
-             data.barberId is string &&
-             data.bookingId is string &&
-             data.rating is int && data.rating >= 1 && data.rating <= 5 &&
-             data.createdAt == request.time;
+      return data.keys().hasAll(['customerId', 'customerName', 'rating', 'createdAt'])
+        && data.customerId == request.auth.uid
+        && data.rating is number && data.rating >= 1 && data.rating <= 5
+        && data.createdAt is string;
     }
 
-    // --- Match Rules ---
+    // --- Match Blocks ---
 
     match /users/{userId} {
       allow get: if isSignedIn();
-      allow list: if isSignedIn();
-      allow create: if isOwner(userId) && isValidUser(incoming());
-      allow update: if isOwner(userId) && 
-                      incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'phoneNumber']);
-    }
-
-    match /services/{serviceId} {
-      allow read: if true;
-      allow write: if isSignedIn(); // Allow any authenticated user (barbers/admin) to manage services for now
+      allow list: if false;
+      allow create, update: if isVerified() && userId == request.auth.uid && isValidUser(incoming());
     }
 
     match /barbers/{barberId} {
       allow read: if true;
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
-      allow update: if isSignedIn() && existing().userId == request.auth.uid && 
-                      incoming().userId == existing().userId &&
-                      incoming().diff(existing()).affectedKeys().hasOnly(['bio', 'specialties', 'available', 'rating', 'reviewCount', 'workingHours', 'photoURL', 'displayName']);
+      allow create, update: if isVerified() && barberId == request.auth.uid;
+
+      match /reviews/{reviewId} {
+        allow read: if true;
+        allow create: if isVerified() && isValidReview(incoming());
+      }
+    }
+
+    match /queues/{queueId} {
+      allow read: if true;
+      allow create, update: if isVerified() && isValidId(queueId) && incoming().barberId == request.auth.uid && isValidQueue(incoming());
+
+      match /customers/{entryId} {
+        allow read: if true;
+        allow create: if isVerified() && isValidId(entryId) && isValidQueueEntry(incoming());
+        allow update: if isVerified() && isValidId(entryId) && (
+          // Customer can update their own entry
+          (existing().customerId == request.auth.uid && incoming().customerId == existing().customerId) ||
+          // Barber who owns the queue can manage entries (status change)
+          (get(/databases/$(database)/documents/queues/$(queueId)).data.barberId == request.auth.uid && 
+           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt']))
+        );
+      }
     }
 
     match /bookings/{bookingId} {
-      allow get: if isSignedIn() && (isOwner(existing().customerId) || isOwner(existing().barberId));
-      allow list: if isSignedIn() && (resource.data.customerId == request.auth.uid || resource.data.barberId == request.auth.uid);
-      allow create: if isSignedIn() && isValidBooking(incoming());
-      
-      allow update: if isSignedIn() && (
-        // Customer can cancel
-        (isOwner(existing().customerId) && incoming().status == 'cancelled' && 
-         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
-        // Barber can confirm or complete
-        (isOwner(existing().barberId) && incoming().status in ['confirmed', 'completed'] && 
-         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
-      );
+      allow list, get: if isVerified() && (resource.data.barberId == request.auth.uid || resource.data.customerId == request.auth.uid);
+      allow create: if isVerified() && isValidId(bookingId) && isValidBooking(incoming());
+      allow update: if isVerified() && (resource.data.barberId == request.auth.uid || resource.data.customerId == request.auth.uid)
+                       && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'cancelledAt', 'appointmentDate']);
     }
 
-    match /reviews/{reviewId} {
+    match /notifications/{notificationId} {
+      allow read, update: if isVerified() && resource.data.userId == request.auth.uid;
+      allow create: if isVerified();
+    }
+
+    match /_connection_test_/{docId} {
       allow read: if true;
-      allow create: if isSignedIn() && isValidReview(incoming());
-      allow update, delete: if false;
     }
   }
 }

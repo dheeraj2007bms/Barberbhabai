@@ -1,27 +1,26 @@
-import { Timestamp } from 'firebase/firestore';
-
-export type UserRole = 'customer' | 'barber';
+export type UserRole = 'customer' | 'barber' | 'admin';
 
 export interface UserProfile {
   uid: string;
   email: string;
-  displayName?: string;
+  displayName: string;
   photoURL?: string;
   role: UserRole;
-  phoneNumber?: string;
-  createdAt: Timestamp;
+  bio?: string;
+  specialties?: string[];
+  createdAt?: any;
 }
 
 export interface Service {
   id: string;
   name: string;
-  description: string;
   price: number;
   durationMinutes: number;
   category: string;
+  description?: string;
 }
 
-export interface WorkingHour {
+export interface WorkingHourConfig {
   start: string;
   end: string;
   enabled: boolean;
@@ -30,34 +29,61 @@ export interface WorkingHour {
 export interface BarberProfile {
   id: string;
   userId: string;
-  bio: string;
-  specialties: string[];
-  available: boolean;
-  rating: number;
-  reviewCount: number;
-  displayName?: string;
+  displayName: string;
   photoURL?: string;
+  bio?: string;
+  rating?: number;
+  reviewCount?: number;
+  available: boolean;
   workingHours?: {
-    [key: string]: WorkingHour;
+    [key: string]: WorkingHourConfig;
   };
+  specialties?: string[];
 }
 
-export type BookingStatus = 'pending' | 'confirmed' | 'cancelled' | 'completed';
+export interface Queue {
+  id: string;
+  barberId: string;
+  shopId: string;
+  active: boolean;
+  createdAt: any;
+}
+
+export interface QueueEntry {
+  id: string;
+  customerId: string;
+  customerName: string;
+  status: 'waiting' | 'in-progress' | 'completed';
+  joinedAt: any;
+  completedAt?: any;
+  position: number;
+}
 
 export interface Booking {
   id: string;
-  customerId: string;
   barberId: string;
-  serviceId: string;
-  startTime: Timestamp;
-  endTime: Timestamp;
-  status: BookingStatus;
-  totalPrice: number;
-  createdAt: Timestamp;
-  updatedAt?: Timestamp;
-  
-  // Denormalized for easier display in lists
-  serviceName?: string;
-  barberName?: string;
-  customerName?: string;
+  customerId: string;
+  serviceName: string;
+  price: number;
+  status: 'upcoming' | 'completed' | 'cancelled' | 'confirmed';
+  appointmentDate?: string;
+  createdAt: any;
+  serviceType?: 'home' | 'shop';
+  address?: string;
+  cancelledAt?: string;
+}
+
+export interface Review {
+  id?: string;
+  customerId: string;
+  customerName: string;
+  rating: number;
+  comment?: string;
+  createdAt: any;
+}
+
+export interface AnalyticsData {
+  _id: string; // Date or Category name
+  total?: number;
+  count: number;
 }

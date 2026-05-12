@@ -1,6 +1,6 @@
 {
   "name": "TrimTime",
-  "description": "A sleek, mobile-first barber booking system designed for effortless scheduling and management.",
+  "description": "A high-performance, real-time barber queue and booking platform. Full-stack architecture with instant synchronization.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

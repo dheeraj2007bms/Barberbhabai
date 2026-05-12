@@ -12,6 +12,7 @@ interface AuthContextType {
   signIn: () => Promise<void>;
   logout: () => Promise<void>;
   updateRole: (role: UserRole) => Promise<void>;
+  getToken: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -40,6 +41,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => unsubscribe();
   }, []);
+
+  const getToken = async () => {
+    if (!auth.currentUser) return null;
+    return await auth.currentUser.getIdToken();
+  };
 
   const signIn = async () => {
     if (signingIn) return;
@@ -107,7 +113,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signingIn, signIn, logout, updateRole }}>
+    <AuthContext.Provider value={{ user, profile, loading, signingIn, signIn, logout, updateRole, getToken }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,0 +1,112 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Entity Validations ---
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'displayName', 'role']) 
+        && data.email is string && data.email.size() <= 200
+        && data.displayName is string && data.displayName.size() <= 100
+        && data.role in ['customer', 'barber', 'admin']
+        && (!('phoneNumber' in data) || (data.phoneNumber is string && data.phoneNumber.size() <= 20))
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1000));
+    }
+
+    function isValidBarber(data) {
+      return data.keys().hasAll(['userId'])
+        && data.userId is string && data.userId.size() <= 128
+        && (!('bio' in data) || (data.bio is string && data.bio.size() <= 1000))
+        && (!('specialties' in data) || (data.specialties is list && data.specialties.size() <= 20 && (data.specialties.size() == 0 || data.specialties[0] is string)));
+    }
+
+    function isValidBooking(data) {
+      return data.keys().hasAll(['customerId', 'barberId', 'serviceName', 'startTime', 'endTime', 'totalPrice'])
+        && data.customerId == request.auth.uid
+        && data.barberId is string && data.barberId.size() <= 128
+        && data.serviceName is string && data.serviceName.size() <= 100
+        && data.totalPrice is number && data.totalPrice >= 0
+        && data.status in ['pending', 'confirmed', 'cancelled', 'completed'];
+    }
+
+    function isValidQueue(data) {
+      return data.keys().hasAll(['barberId', 'customerId', 'position', 'status'])
+        && data.barberId is string && data.barberId.size() <= 128
+        && data.customerId == request.auth.uid
+        && data.position is number && data.position >= 0
+        && data.status in ['waiting', 'in-progress', 'completed'];
+    }
+
+    // --- Match Blocks ---
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if false; // No blanket listing
+      allow create: if isVerified() && userId == request.auth.uid && isValidUser(incoming());
+      allow update: if isVerified() && userId == request.auth.uid && isValidUser(incoming())
+        && incoming().role == existing().role
+        && incoming().email == existing().email; // Email immutable
+    }
+
+    match /barbers/{barberId} {
+      allow read: if true;
+      allow create: if isVerified() && incoming().userId == request.auth.uid && isValidBarber(incoming());
+      allow update: if isVerified() && existing().userId == request.auth.uid 
+        && incoming().userId == existing().userId
+        && isValidBarber(incoming());
+    }
+
+    match /bookings/{bookingId} {
+      allow get: if isSignedIn() && (existing().customerId == request.auth.uid || existing().barberId == request.auth.uid);
+      allow list: if isSignedIn() && (resource.data.customerId == request.auth.uid || resource.data.barberId == request.auth.uid);
+      
+      allow create: if isVerified() && isValidBooking(incoming()) && isValidId(bookingId);
+      
+      allow update: if isVerified() && (
+        // Customer can cancel
+        (existing().customerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status']) && incoming().status == 'cancelled') ||
+        // Barber can confirm or complete
+        (existing().barberId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status']) && incoming().status in ['confirmed', 'completed'])
+      );
+      
+      allow delete: if false; // Audit logs preservation
+    }
+
+    match /queue/{queueId} {
+      allow read: if true;
+      allow create: if isVerified() && isValidQueue(incoming()) && isValidId(queueId);
+      
+      allow update: if isVerified() && (
+        // Barber manages queue
+        (existing().barberId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'position'])) ||
+        // User can leave
+        (existing().customerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status']) && incoming().status == 'completed')
+      );
+    }
+  }
+}

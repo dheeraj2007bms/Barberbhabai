@@ -16,7 +16,9 @@ import {
   Edit2,
   Save,
   ChevronLeft,
-  Filter
+  Filter,
+  Sparkles,
+  Bell
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AuthProvider, useAuth } from './lib/AuthContext';
@@ -27,6 +29,7 @@ import {
   getDocs, 
   getDoc,
   addDoc, 
+  onSnapshot,
   query, 
   where, 
   orderBy, 
@@ -39,25 +42,39 @@ import {
 import { Service, BarberProfile, Booking, UserRole } from './types';
 import { formatCurrency, cn } from './lib/utils';
 import { format, addMinutes, isAfter, isBefore, startOfDay, endOfDay } from 'date-fns';
+import { QueueScreen } from './screens/QueueScreen';
+import { BarberQueueScreen } from './screens/BarberQueueScreen';
+import { AnalyticsScreen } from './screens/AnalyticsScreen';
+import { BookingScreen } from './screens/BookingScreen';
+import { BarberListScreen } from './screens/BarberListScreen';
+import { AISuggestionScreen } from './screens/AISuggestionScreen';
+import { BookingHistoryScreen } from './screens/BookingHistoryScreen';
 
 // --- Components ---
 
 const Navbar = ({ activeTab, setActiveTab, role }: { activeTab: string, setActiveTab: (t: string) => void, role: UserRole }) => {
   const tabs = role === 'customer' 
     ? [
-        { id: 'book', label: 'Book', icon: Scissors },
-        { id: 'bookings', label: 'Schedule', icon: Calendar },
-        { id: 'profile', label: 'Systems', icon: User },
+        { id: 'barbers', label: 'Barbers', icon: User },
+        { id: 'queue', label: 'Queue', icon: Clock },
+        { id: 'book', label: 'Special', icon: Scissors },
+        { id: 'profile', label: 'Systems', icon: Settings },
       ]
     : [
-        { id: 'schedule', label: 'Active', icon: Calendar },
-        { id: 'manage', label: 'Services', icon: Scissors },
+        { id: 'barber-queue', label: 'Terminal', icon: Clock },
+        { id: 'analytics', label: 'Metrics', icon: Calendar },
         { id: 'profile', label: 'Systems', icon: User },
       ];
 
+  const clientTabsWithAI = role === 'customer' ? [
+    ...tabs.slice(0, -1),
+    { id: 'ai', label: 'Counsel', icon: Sparkles },
+    tabs[tabs.length - 1]
+  ] : tabs;
+
   return (
     <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 px-6 py-4 pb-10 flex justify-around items-center z-50">
-      {tabs.map((tab) => {
+      {clientTabsWithAI.map((tab) => {
         const Icon = tab.icon;
         const isActive = activeTab === tab.id;
         return (
@@ -152,604 +169,6 @@ const RoleSelection = () => {
   );
 };
 
-const CustomerBooking = () => {
-  const [services, setServices] = useState<Service[]>([]);
-  const [barbers, setBarbers] = useState<BarberProfile[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [step, setStep] = useState(1);
-  const [selectedCategory, setSelectedCategory] = useState<string>('All');
-  const [selection, setSelection] = useState<{
-    service: Service | null,
-    barber: BarberProfile | null,
-    date: Date | null,
-    time: Date | null
-  }>({ service: null, barber: null, date: new Date(), time: null });
-  const [availableSlots, setAvailableSlots] = useState<Date[]>([]);
-  const [loadingSlots, setLoadingSlots] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
-
-  const { profile, user } = useAuth();
-
-  useEffect(() => {
-    const fetchData = async () => {
-      const sSnap = await getDocs(collection(db, 'services'));
-      const sData = sSnap.docs.map(d => ({ id: d.id, ...d.data() } as Service));
-      
-      if (sData.length === 0) {
-        const defaults = [
-          { name: 'Skin Fade', price: 150, durationMinutes: 45, category: 'Haircut', description: 'Precision fade with grooming' },
-          { name: 'Beard Sculpt', price: 100, durationMinutes: 30, category: 'Beard', description: 'Sharp lines and detailing' },
-          { name: 'Executive Package', price: 450, durationMinutes: 90, category: 'Combo', description: 'Premium cut and detailed shave' },
-        ];
-        for (const s of defaults) {
-          await addDoc(collection(db, 'services'), s);
-        }
-        const freshSnap = await getDocs(collection(db, 'services'));
-        setServices(freshSnap.docs.map(d => ({ id: d.id, ...d.data() } as Service)));
-      } else {
-        setServices(sData);
-      }
-
-      const bSnap = await getDocs(collection(db, 'barbers'));
-      const bData = bSnap.docs.map(d => ({ id: d.id, ...d.data() } as BarberProfile));
-      setBarbers(bData.filter(b => b.available));
-      setLoading(false);
-    };
-    fetchData();
-  }, []);
-
-  useEffect(() => {
-    if (selection.barber && selection.date && selection.service) {
-      fetchAvailableSlots();
-    }
-  }, [selection.barber, selection.date, selection.service]);
-
-  const fetchAvailableSlots = async () => {
-    if (!selection.barber || !selection.date || !selection.service) return;
-    setLoadingSlots(true);
-
-    const dayName = format(selection.date, 'eeee').toLowerCase();
-    
-    // Fallback defaults if workingHours is missing (for older accounts)
-    const defaultHours = {
-      monday: { start: '09:00', end: '17:00', enabled: true },
-      tuesday: { start: '09:00', end: '17:00', enabled: true },
-      wednesday: { start: '09:00', end: '17:00', enabled: true },
-      thursday: { start: '09:00', end: '17:00', enabled: true },
-      friday: { start: '09:00', end: '17:00', enabled: true },
-      saturday: { start: '10:00', end: '14:00', enabled: true },
-      sunday: { start: '10:00', end: '14:00', enabled: false },
-    };
-
-    const config = selection.barber.workingHours?.[dayName] || (defaultHours as any)[dayName];
-
-    if (!config || !config.enabled) {
-      setAvailableSlots([]);
-      setLoadingSlots(false);
-      return;
-    }
-
-    try {
-      // Fetch existing bookings for this barber on this day
-      const dayStart = startOfDay(selection.date);
-      const dayEnd = endOfDay(selection.date);
-      const q = query(
-        collection(db, 'bookings'),
-        where('barberId', '==', selection.barber.userId),
-        where('startTime', '>=', Timestamp.fromDate(dayStart)),
-        where('startTime', '<=', Timestamp.fromDate(dayEnd)),
-        where('status', 'in', ['pending', 'confirmed'])
-      );
-      const snap = await getDocs(q);
-      const existingBookings = snap.docs.map(d => d.data() as Booking);
-
-      // Generate slots
-      const slots: Date[] = [];
-      const [startH, startM] = config.start.split(':').map(Number);
-      const [endH, endM] = config.end.split(':').map(Number);
-      
-      let currentSlot = addMinutes(dayStart, startH * 60 + startM);
-      const endTime = addMinutes(dayStart, endH * 60 + endM);
-
-      while (isBefore(currentSlot, endTime)) {
-        const slotEnd = addMinutes(currentSlot, selection.service.durationMinutes);
-        
-        // Check if slot overlaps with existing bookings
-        const isConflict = existingBookings.some(b => {
-          const bStart = b.startTime.toDate();
-          const bEnd = b.endTime.toDate();
-          return (isBefore(currentSlot, bEnd) && isAfter(slotEnd, bStart));
-        });
-
-        // Check if slot is in the past (only if selected date is today)
-        const isToday = selection.date.toDateString() === new Date().toDateString();
-        const isPast = isToday && isBefore(currentSlot, new Date());
-
-        if (!isConflict && !isPast && !isAfter(slotEnd, endTime)) {
-          slots.push(currentSlot);
-        }
-        currentSlot = addMinutes(currentSlot, 30); // 30min increments
-      }
-
-      setAvailableSlots(slots);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoadingSlots(false);
-    }
-  };
-
-  const handleBooking = async () => {
-    if (!selection.service || !selection.barber || !selection.time || !user) return;
-    const startTimeToken = Timestamp.fromDate(selection.time);
-    const endTimeToken = Timestamp.fromDate(addMinutes(selection.time, selection.service.durationMinutes));
-
-    try {
-      await addDoc(collection(db, 'bookings'), {
-        customerId: user.uid,
-        barberId: selection.barber.userId,
-        serviceId: selection.service.id,
-        serviceName: selection.service.name,
-        barberName: selection.barber.displayName || 'Barber',
-        customerName: profile?.displayName || 'Client',
-        startTime: startTimeToken,
-        endTime: endTimeToken,
-        status: 'pending',
-        totalPrice: selection.service.price,
-        createdAt: serverTimestamp(),
-      });
-      setShowSuccess(true);
-      // Logic for background confirmation email would trigger here
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const resetBooking = () => {
-    setShowSuccess(false);
-    setStep(1);
-    setSelection({ service: null, barber: null, date: new Date(), time: null });
-  };
-
-  const categories = ['All', ...Array.from(new Set(services.map(s => s.category)))];
-  const filteredServices = selectedCategory === 'All' 
-    ? services 
-    : services.filter(s => s.category === selectedCategory);
-
-  // Add this state inside CustomerBooking
-  const [viewingBarber, setViewingBarber] = useState<BarberProfile | null>(null);
-
-  if (showSuccess) {
-    return (
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.9 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="min-h-[60vh] flex flex-col items-center justify-center p-8 text-center space-y-10"
-      >
-        <div className="relative">
-          <div className="w-24 h-24 bg-zinc-900 flex items-center justify-center mx-auto shadow-2xl relative z-10">
-            <CheckCircle2 className="text-white" size={48} />
-          </div>
-          <motion.div 
-            initial={{ scale: 0 }}
-            animate={{ scale: 1.5, opacity: 0 }}
-            transition={{ duration: 1.5, repeat: Infinity }}
-            className="absolute inset-0 bg-zinc-900/10 rounded-full"
-          />
-        </div>
-        
-        <div className="space-y-3">
-          <h2 className="text-2xl font-bold uppercase tracking-tighter">Mission Successful</h2>
-          <p className="text-[10px] text-stone-400 font-bold uppercase tracking-[0.3em] max-w-[200px] mx-auto leading-relaxed">
-            Temporal node synchronized. Your arrival is expected.
-          </p>
-        </div>
-
-        <div className="w-full max-w-xs bg-white border border-stone-100 p-6 space-y-4 shadow-sm">
-          <div className="flex justify-between items-center border-b border-stone-50 pb-3">
-            <span className="text-[8px] font-bold uppercase text-stone-300 tracking-widest text-left">Specialist</span>
-            <span className="text-[10px] font-bold uppercase text-zinc-900">{selection.barber?.displayName}</span>
-          </div>
-          <div className="flex justify-between items-center border-b border-stone-50 pb-3">
-            <span className="text-[8px] font-bold uppercase text-stone-300 tracking-widest text-left">Temporal Node</span>
-            <span className="text-[10px] font-bold uppercase text-zinc-900">{selection.time ? format(selection.time, 'HH:mm | MMM d') : ''}</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-[8px] font-bold uppercase text-stone-300 tracking-widest text-left">Objective</span>
-            <span className="text-[10px] font-bold uppercase text-zinc-900">{selection.service?.name}</span>
-          </div>
-        </div>
-
-        <div className="space-y-4 w-full max-w-xs">
-          <div className="flex items-center justify-center gap-2 text-stone-400">
-            <Clock size={10} />
-            <span className="text-[8px] font-bold uppercase tracking-widest italic">Confirmation Email Pending...</span>
-          </div>
-          <Button onClick={resetBooking} className="w-full h-14 shadow-lg border-stone-200">
-            Return to Portal
-          </Button>
-        </div>
-      </motion.div>
-    );
-  }
-
-  if (viewingBarber) {
-    return (
-      <div className="space-y-10 animate-in fade-in slide-in-from-right-4 duration-500 pb-32">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => setViewingBarber(null)} className="px-1 border border-stone-200">
-            <ChevronLeft size={16} />
-          </Button>
-          <h2 className="text-xl font-bold uppercase tracking-tight">Barber Module</h2>
-        </div>
-
-        <div className="space-y-8">
-          <div className="flex gap-6 items-start">
-            <div className="w-24 h-24 border-2 border-zinc-900 shrink-0 bg-stone-50 p-1">
-              {viewingBarber.photoURL ? (
-                <img src={viewingBarber.photoURL} alt={viewingBarber.displayName} className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <User size={32} className="text-stone-200" />
-                </div>
-              )}
-            </div>
-            <div className="space-y-2">
-              <h3 className="text-xl font-bold uppercase tracking-tighter leading-none">{viewingBarber.displayName}</h3>
-              <div className="flex items-center gap-1.5 mb-2">
-                <Star size={10} className="fill-zinc-900 text-zinc-900" />
-                <span className="text-[10px] font-bold">{viewingBarber.rating || '5.0'}</span>
-                <span className="text-[10px] text-stone-300">({viewingBarber.reviewCount || 0} reviews)</span>
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {viewingBarber.specialties?.map(s => (
-                  <Badge key={s} variant="outline" className="text-[7px] py-0 h-4">{s}</Badge>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <h4 className="text-[10px] font-bold uppercase tracking-widest text-zinc-900 border-b border-stone-100 pb-1">Professional Bio</h4>
-            <p className="text-xs text-stone-500 leading-relaxed italic">{viewingBarber.bio || 'No mission objective defined.'}</p>
-          </div>
-
-          <div className="space-y-4">
-            <h4 className="text-[10px] font-bold uppercase tracking-widest text-zinc-900 border-b border-stone-100 pb-1">Standard Uptime</h4>
-            <div className="text-[9px] uppercase font-bold text-stone-400 space-y-1">
-              {['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map(day => {
-                const config = viewingBarber.workingHours?.[day];
-                return (
-                  <div key={day} className="flex justify-between items-center py-1 border-b border-stone-50">
-                    <span className={config?.enabled ? 'text-stone-600' : 'text-stone-200'}>{day}</span>
-                    <span>{config?.enabled ? `${config.start} - ${config.end}` : 'OFFLINE'}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <Button 
-            className="w-full h-16 shadow-xl"
-            onClick={() => {
-              setSelection({ ...selection, barber: viewingBarber });
-              setViewingBarber(null);
-              setStep(3);
-            }}
-          >
-            Select This Unit
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  if (loading) return <div className="p-8 text-center font-bold uppercase tracking-widest text-[10px]">Synchronizing...</div>;
-
-  return (
-    <div className="pb-32">
-      <div className="flex items-center justify-between mb-10">
-        <div className="flex items-center gap-2">
-           {step > 1 && (
-             <button onClick={() => setStep(step - 1)} className="p-1 hover:bg-stone-100 transition-colors">
-               <ChevronLeft size={18} />
-             </button>
-           )}
-           <h2 className="text-xl font-bold uppercase tracking-tight">Book Service</h2>
-        </div>
-        <div className="text-[8px] font-bold uppercase border border-stone-200 px-2 py-0.5 text-stone-400">
-          Module {step}/3
-        </div>
-      </div>
-
-      <AnimatePresence mode="wait">
-        {step === 1 && (
-          <motion.div 
-            key="step1"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            className="space-y-6"
-          >
-            <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
-              {categories.map(cat => (
-                <button
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={cn(
-                    "px-3 py-1 text-[9px] font-bold uppercase tracking-widest border transition-all whitespace-nowrap",
-                    selectedCategory === cat ? "bg-zinc-900 border-zinc-900 text-white" : "bg-white border-stone-200 text-stone-400"
-                  )}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
-
-            <h3 className="text-[10px] uppercase font-bold text-stone-400 tracking-widest">Select Routine</h3>
-            <div className="grid grid-cols-2 gap-3">
-              {filteredServices.map(s => (
-                <div 
-                  key={s.id} 
-                  className={cn(
-                    "cursor-pointer p-4 border transition-all",
-                    selection.service?.id === s.id 
-                      ? "bg-zinc-900 border-zinc-900 text-white" 
-                      : "bg-white border-stone-200 text-slate-900"
-                  )}
-                  onClick={() => { setSelection({ ...selection, service: s }); setStep(2); }}
-                >
-                  <p className={cn("text-[9px] uppercase font-bold mb-1", selection.service?.id === s.id ? "text-white/60" : "text-stone-400")}>{s.name}</p>
-                  <p className="text-sm font-bold">{formatCurrency(s.price)}</p>
-                  <p className={cn("text-[8px] uppercase tracking-tighter mt-1", selection.service?.id === s.id ? "text-white/40" : "text-stone-300")}>{s.durationMinutes}m</p>
-                </div>
-              ))}
-              {filteredServices.length === 0 && (
-                <div className="col-span-2 py-10 text-center border border-dashed border-stone-200 text-stone-300 text-[10px] uppercase font-bold tracking-widest">
-                  No Services Found
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-
-        {step === 2 && (
-          <motion.div 
-            key="step2"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            className="space-y-8"
-          >
-            <h3 className="text-[10px] uppercase font-bold text-stone-400 tracking-widest">Assign Specialist</h3>
-            <div className="flex flex-wrap gap-6 px-2">
-              {barbers.map(b => (
-                <div 
-                  key={b.id}
-                  className={cn(
-                    "cursor-pointer flex flex-col items-center transition-all",
-                    selection.barber?.id === b.id ? "opacity-100" : "opacity-40"
-                  )}
-                  onClick={() => setViewingBarber(b)}
-                >
-                  <div className={cn(
-                    "w-16 h-16 rounded-full border-2 bg-stone-50 flex items-center justify-center mb-2 overflow-hidden",
-                    selection.barber?.id === b.id ? "border-zinc-900" : "border-transparent"
-                  )}>
-                    {b.photoURL ? <img src={b.photoURL} alt={b.displayName} className="w-full h-full object-cover" /> : <User size={24} className="text-stone-200" />}
-                  </div>
-                  <span className="text-[10px] font-bold uppercase tracking-widest leading-none mt-1">{b.displayName || 'Barber'}</span>
-                  <div className="flex items-center gap-1 mt-1 text-stone-400">
-                    <Star size={8} className="fill-stone-400" />
-                    <span className="text-[8px] font-bold">{b.rating || '5.0'}</span>
-                    <span className="text-[8px] opacity-40 ml-0.5">({b.reviewCount || 0})</span>
-                  </div>
-                  <div className="mt-1 w-4 h-0.5 bg-zinc-900 opacity-0 group-hover:opacity-100 transition-opacity" />
-                </div>
-              ))}
-            </div>
-          </motion.div>
-        )}
-
-        {step === 3 && (
-          <motion.div 
-            key="step3"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            className="space-y-8"
-          >
-            <div className="space-y-4">
-              <h3 className="text-[10px] uppercase font-bold text-stone-400 tracking-widest">Temporal Node</h3>
-              <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
-                {[0, 1, 2, 3, 4, 5, 6].map(offset => {
-                  const date = addMinutes(startOfDay(new Date()), offset * 24 * 60);
-                  const isSelected = selection.date?.toDateString() === date.toDateString();
-                  return (
-                    <button
-                      key={offset}
-                      onClick={() => setSelection({ ...selection, date, time: null })}
-                      className={cn(
-                        "flex flex-col items-center min-w-[50px] p-2 border transition-all",
-                        isSelected ? "bg-zinc-900 border-zinc-900 text-white" : "bg-white border-stone-200 text-stone-400"
-                      )}
-                    >
-                      <span className="text-[8px] uppercase font-bold tracking-tighter opacity-70">{format(date, 'eee')}</span>
-                      <span className="text-xs font-bold">{format(date, 'd')}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-4 gap-2">
-              {loadingSlots ? (
-                <div className="col-span-4 py-12 text-center bg-stone-50 border border-dashed border-stone-100 flex flex-col items-center justify-center gap-3">
-                  <div className="w-4 h-4 border-2 border-stone-300 border-t-zinc-900 rounded-full animate-spin" />
-                  <p className="text-[10px] uppercase font-bold text-stone-400 tracking-widest">Refining Temporal Map...</p>
-                </div>
-              ) : (
-                <>
-                  {availableSlots.map(slot => {
-                    const isSelected = selection.time?.getTime() === slot.getTime();
-                    const slotEnd = addMinutes(slot, selection.service?.durationMinutes || 30);
-                    return (
-                      <div 
-                        key={slot.getTime()}
-                        className={cn(
-                          "cursor-pointer py-2 px-1 text-center border transition-all",
-                          isSelected ? "bg-zinc-900 border-zinc-900 text-white" : "bg-stone-50 border-stone-100 text-slate-400"
-                        )}
-                        onClick={() => setSelection({ ...selection, time: slot })}
-                      >
-                        <p className="text-[9px] font-bold tracking-tight">{format(slot, 'HH:mm')}</p>
-                        <p className={cn("text-[7px] font-medium opacity-50", isSelected ? "text-white" : "text-stone-300")}>
-                          {format(slotEnd, 'HH:mm')}
-                        </p>
-                      </div>
-                    );
-                  })}
-                  {availableSlots.length === 0 && (
-                    <div className="col-span-4 py-12 text-center bg-stone-50 border border-dashed border-stone-100 px-6">
-                      <p className="text-zinc-900 text-[10px] uppercase font-bold tracking-widest mb-1">Null Capacity detected</p>
-                      <p className="text-stone-400 text-[8px] uppercase tracking-tighter leading-relaxed">
-                        The selected unit is currently offline for this temporal node. Try another date or specialist.
-                      </p>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-
-            <div className="pt-8 space-y-4">
-              <div className="border border-zinc-900 p-6 flex justify-between items-end relative overflow-hidden bg-white">
-                <div className="relative z-10 space-y-2">
-                  <p className="text-[8px] font-bold uppercase text-stone-400 tracking-[0.2em]">Summary</p>
-                  <h4 className="text-xl font-bold uppercase tracking-tighter">{selection.service?.name}</h4>
-                  <div className="flex gap-4 text-[9px] font-bold uppercase text-stone-500 tracking-widest">
-                    <span>{selection.service?.durationMinutes}m</span>
-                    <span className="w-px h-2 bg-stone-200 my-auto" />
-                    <span>{selection.barber?.displayName || 'Barber'}</span>
-                    <span className="w-px h-2 bg-stone-200 my-auto" />
-                    <span>{selection.time ? format(selection.time, 'MMM d, HH:mm') : 'Unassigned'}</span>
-                  </div>
-                </div>
-                <div className="text-right relative z-10">
-                  <p className="text-[8px] font-bold uppercase text-zinc-300 tracking-[0.2em]">Charge</p>
-                  <p className="text-2xl font-bold text-zinc-900">{formatCurrency(selection.service?.price || 0)}</p>
-                </div>
-                <div className="absolute top-0 right-0 w-24 h-24 bg-stone-50 -translate-y-12 translate-x-12 rotate-45" />
-              </div>
-
-              <Button 
-                disabled={!selection.time} 
-                onClick={handleBooking} 
-                size="lg" 
-                className="w-full h-18 text-sm"
-              >
-                Confirm Appointment
-              </Button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-};
-
-const BookingsList = ({ role }: { role: UserRole }) => {
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [loading, setLoading] = useState(true);
-  const { user, profile } = useAuth();
-
-  useEffect(() => {
-    if (!user) return;
-    const fetchBookings = async () => {
-      const field = role === 'customer' ? 'customerId' : 'barberId';
-      const q = query(
-        collection(db, 'bookings'), 
-        where(field, '==', user.uid),
-        orderBy('startTime', 'desc')
-      );
-      const snap = await getDocs(q);
-      setBookings(snap.docs.map(d => ({ id: d.id, ...d.data() } as Booking)));
-      setLoading(false);
-    };
-    fetchBookings();
-  }, [user, role]);
-
-  const updateStatus = async (id: string, status: string) => {
-    await updateDoc(doc(db, 'bookings', id), { 
-      status, 
-      updatedAt: serverTimestamp() 
-    });
-    setBookings(bookings.map(b => b.id === id ? { ...b, status: status as any } : b));
-  };
-
-  if (loading) return <div className="p-8 text-center font-bold uppercase tracking-widest text-[10px]">Accessing Schedule...</div>;
-
-  return (
-    <div className="pb-32 space-y-10">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold uppercase tracking-tight">{role === 'customer' ? 'My Schedule' : `Console: ${profile?.displayName || 'Barber'}`}</h2>
-          <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mt-1">
-            {format(new Date(), 'EEEE, MMM do')}
-          </p>
-        </div>
-        <div className="h-10 w-10 flex items-center justify-center border border-stone-200 font-bold text-xs uppercase bg-white">
-          {bookings.length}
-        </div>
-      </div>
-
-      <div className="space-y-6">
-        <h3 className="text-[10px] uppercase font-bold text-stone-400 tracking-widest">Temporal Invariants</h3>
-        {bookings.map(b => (
-          <Card key={b.id} className={cn(
-            "p-0 border-none bg-transparent flex items-center gap-4 transition-all pl-4",
-            b.status === 'confirmed' ? "border-l-4 border-zinc-900" : "border-l-4 border-stone-200"
-          )}>
-            <div className="w-12 text-[10px] font-bold text-slate-900 shrink-0">
-               {format(b.startTime.toDate(), 'HH:mm')}
-            </div>
-            <div className="flex-1 py-1">
-              <div className="flex justify-between items-center">
-                <h4 className="text-xs font-bold uppercase tracking-tight">{role === 'customer' ? b.barberName : b.customerName}</h4>
-                <div className={cn(
-                  "w-1.5 h-1.5 rounded-full",
-                  b.status === 'confirmed' ? "bg-green-500" : 
-                  b.status === 'pending' ? "bg-yellow-500" : 
-                  b.status === 'cancelled' ? "bg-red-500" : "bg-stone-300"
-                )} />
-              </div>
-              <p className="text-[9px] font-bold text-stone-400 uppercase tracking-widest mt-0.5">{b.serviceName}</p>
-            </div>
-            
-            <div className="pr-4 flex gap-2">
-              {role === 'barber' && b.status === 'pending' && (
-                <button onClick={() => updateStatus(b.id, 'confirmed')} className="text-[8px] font-bold uppercase tracking-widest text-zinc-900 border border-zinc-200 px-2 py-1 hover:bg-zinc-900 hover:border-zinc-900 hover:text-white transition-all">
-                  Conf
-                </button>
-              )}
-              {role === 'barber' && b.status === 'confirmed' && (
-                <button onClick={() => updateStatus(b.id, 'completed')} className="text-[8px] font-bold uppercase tracking-widest text-zinc-900 border border-zinc-200 px-2 py-1 hover:bg-zinc-900 hover:border-zinc-900 hover:text-white transition-all">
-                  Done
-                </button>
-              )}
-            </div>
-          </Card>
-        ))}
-
-        {bookings.length === 0 && (
-          <div className="text-center py-20 border border-dashed border-stone-200">
-            <p className="text-stone-300 text-[10px] font-bold uppercase tracking-widest">No Active Nodes</p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
 const WorkingHoursManager = () => {
   const { user } = useAuth();
   const [barberProfile, setBarberProfile] = useState<BarberProfile | null>(null);
@@ -820,10 +239,7 @@ const WorkingHoursManager = () => {
     if (!user || !barberProfile) return;
     setSaving(true);
     try {
-      await updateDoc(doc(db, 'barbers', user.uid), {
-        workingHours: barberProfile.workingHours,
-        available: barberProfile.available
-      });
+      await updateDoc(doc(db, 'barbers', user.uid), barberProfile as any);
       alert('SYSTEM UPDATED');
     } catch (err) {
       console.error(err);
@@ -912,31 +328,42 @@ const ServiceManager = () => {
   }, []);
 
   const fetchServices = async () => {
-    const sSnap = await getDocs(collection(db, 'services'));
-    setServices(sSnap.docs.map(d => ({ id: d.id, ...d.data() } as Service)));
-    setLoading(false);
+    try {
+      const snap = await getDocs(collection(db, 'services'));
+      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Service[];
+      setServices(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSave = async () => {
     if (!editingService?.name || !editingService?.price) return;
     
-    if (editingService.id) {
-      const { id, ...data } = editingService;
-      await updateDoc(doc(db, 'services', id), data);
-    } else {
-      await addDoc(collection(db, 'services'), {
-        ...editingService,
-        category: editingService.category || 'General'
-      });
+    try {
+      if (editingService.id) {
+        await updateDoc(doc(db, 'services', editingService.id), editingService as any);
+      } else {
+        await addDoc(collection(db, 'services'), editingService);
+      }
+      
+      setEditingService(null);
+      fetchServices();
+    } catch (err) {
+      console.error(err);
     }
-    setEditingService(null);
-    fetchServices();
   };
 
   const handleDelete = async (id: string) => {
     if (confirm('Delete service?')) {
-      await deleteDoc(doc(db, 'services', id));
-      fetchServices();
+      try {
+        await deleteDoc(doc(db, 'services', id));
+        fetchServices();
+      } catch (err) {
+        console.error(err);
+      }
     }
   };
 
@@ -1039,11 +466,16 @@ const BarberProfileEditor = () => {
   useEffect(() => {
     if (!user) return;
     const fetchBarber = async () => {
-      const snap = await getDoc(doc(db, 'barbers', user.uid));
-      if (snap.exists()) {
-        setProfileData(snap.data() as BarberProfile);
+      try {
+        const snap = await getDoc(doc(db, 'barbers', user.uid));
+        if (snap.exists()) {
+          setProfileData(snap.data() as BarberProfile);
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
     fetchBarber();
   }, [user]);
@@ -1052,17 +484,7 @@ const BarberProfileEditor = () => {
     if (!user || !profileData) return;
     setSaving(true);
     try {
-      await updateDoc(doc(db, 'barbers', user.uid), {
-        displayName: profileData.displayName || '',
-        bio: profileData.bio || '',
-        specialties: profileData.specialties || [],
-        photoURL: profileData.photoURL || '',
-      });
-      // Also update the main users collection
-      await updateDoc(doc(db, 'users', user.uid), {
-        displayName: profileData.displayName || '',
-        photoURL: profileData.photoURL || '',
-      });
+      await updateDoc(doc(db, 'barbers', user.uid), profileData);
       alert('NODE PERSISTED');
     } catch (err) {
       console.error(err);
@@ -1105,6 +527,18 @@ const BarberProfileEditor = () => {
           />
         </div>
 
+        {profileData?.rating !== undefined && (
+          <div className="p-4 bg-stone-50 border border-stone-100 flex justify-between items-center">
+            <span className="text-[8px] font-bold uppercase text-stone-400 tracking-widest">Public Standing</span>
+            <div className="flex items-center gap-2">
+              <Star size={10} className="fill-zinc-900 text-zinc-900" />
+              <span className="text-xs font-bold uppercase tracking-tighter">
+                {profileData.rating} ({profileData.reviewCount} Reviews)
+              </span>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-1">
           <label className="text-[8px] font-bold uppercase text-stone-400 tracking-widest">Specialties (comma separated)</label>
           <Input 
@@ -1121,9 +555,70 @@ const BarberProfileEditor = () => {
   );
 };
 
+const NotificationsView = () => {
+  const { user } = useAuth();
+  const [notifications, setNotifications] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(
+      collection(db, 'notifications'),
+      where('userId', '==', user.uid),
+      orderBy('createdAt', 'desc')
+    );
+    return onSnapshot(q, (snapshot) => {
+      setNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+  }, [user]);
+
+  return (
+    <div className="space-y-4">
+      {notifications.length > 0 ? (
+        notifications.map((n) => (
+          <Card key={n.id} className={`p-4 border-l-4 ${n.read ? 'border-zinc-200' : 'border-zinc-900 bg-stone-50'}`}>
+            <p className="text-[8px] font-bold uppercase tracking-widest text-stone-400 mb-1">{n.type}</p>
+            <h4 className="text-sm font-bold uppercase tracking-tight">{n.title}</h4>
+            <p className="text-xs text-stone-600 mt-1">{n.message}</p>
+          </Card>
+        ))
+      ) : (
+        <p className="text-center text-[10px] uppercase font-bold text-stone-300 py-10">No alerts in sector</p>
+      )}
+    </div>
+  );
+};
+
 const ProfileView = () => {
   const { profile, logout } = useAuth();
-  const [activeSubView, setActiveSubView] = useState<'main' | 'schedule' | 'identity' | 'services'>('main');
+  const [activeSubView, setActiveSubView] = useState<'main' | 'schedule' | 'identity' | 'services' | 'history' | 'alerts'>('main');
+
+  if (activeSubView === 'alerts') {
+    return (
+      <div className="space-y-8 h-full">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="sm" onClick={() => setActiveSubView('main')} className="px-1 border border-stone-200">
+            <ChevronLeft size={16} />
+          </Button>
+          <h2 className="text-xl font-bold uppercase tracking-tight">Active Alerts</h2>
+        </div>
+        <NotificationsView />
+      </div>
+    );
+  }
+
+  if (activeSubView === 'history') {
+    return (
+      <div className="space-y-8 h-full">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="sm" onClick={() => setActiveSubView('main')} className="px-1 border border-stone-200">
+            <ChevronLeft size={16} />
+          </Button>
+          <h2 className="text-xl font-bold uppercase tracking-tight">Mission History</h2>
+        </div>
+        <BookingHistoryScreen onBack={() => setActiveSubView('main')} />
+      </div>
+    );
+  }
 
   if (activeSubView === 'schedule' && profile?.role === 'barber') {
     return (
@@ -1235,6 +730,16 @@ const ProfileView = () => {
             </Button>
           </>
         )}
+        <Button variant="outline" onClick={() => setActiveSubView('history')} className="w-full h-14 justify-start px-8">
+          <History size={14} className="mr-4" />
+          Mission Archive
+        </Button>
+        {profile?.role === 'barber' && (
+          <Button variant="outline" onClick={() => setActiveSubView('alerts')} className="w-full h-14 justify-start px-8">
+            <Bell size={14} className="mr-4" />
+            Active Alerts
+          </Button>
+        )}
         <Button variant="outline" className="w-full h-14 justify-start px-8">
           Preferences
         </Button>
@@ -1263,32 +768,57 @@ const ProfileView = () => {
 
 const MainApp = () => {
   const { profile } = useAuth();
-  const [activeTab, setActiveTab] = useState(profile?.role === 'customer' ? 'book' : 'schedule');
+  const [activeTab, setActiveTab] = useState('barbers');
+  const [selectedBarberId, setSelectedBarberId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (profile?.role === 'barber') {
+      setActiveTab('barber-queue');
+    } else {
+      setActiveTab('barbers');
+    }
+  }, [profile]);
+
+  const handleBarberSelect = (id: string) => {
+    setSelectedBarberId(id);
+    setActiveTab('queue');
+  };
 
   return (
-    <div className="min-h-screen bg-stone-100 text-slate-900 font-sans selection:bg-zinc-900 selection:text-white">
-      <div className="max-w-md mx-auto p-8 pt-16 h-full pb-24">
-        <div className="bg-white border-[10px] border-zinc-900 shadow-2xl min-h-[700px] flex flex-col">
-          {/* Status bar mock */}
-          <div className="h-6 bg-zinc-900 w-full flex justify-center items-end pb-1 shrink-0">
+    <div className="min-h-screen bg-stone-100 text-slate-900 font-sans selection:bg-zinc-900 selection:text-white pb-32">
+      {/* Container - Phone frame on desktop, full screen on mobile */}
+      <div className="md:max-w-md md:mx-auto md:pt-16 h-full">
+        <div className="bg-white md:border-[10px] md:border-zinc-900 md:shadow-2xl min-h-screen md:min-h-[700px] flex flex-col">
+          {/* Status bar mock - only on desktop frame */}
+          <div className="hidden md:flex h-6 bg-zinc-900 w-full justify-center items-end pb-1 shrink-0">
             <div className="w-16 h-2 bg-black rounded-full shadow-inner"></div>
           </div>
           
-          <div className="p-8 flex-1 overflow-y-auto">
+          <div className="p-6 md:p-8 flex-1 overflow-y-auto">
             <AnimatePresence mode="wait">
+              {activeTab === 'barbers' && (
+                <motion.div key="barbers" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}>
+                  <BarberListScreen onSelect={handleBarberSelect} />
+                </motion.div>
+              )}
+              {activeTab === 'queue' && (
+                <motion.div key="queue" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}>
+                  <QueueScreen barberId={selectedBarberId} />
+                </motion.div>
+              )}
+              {activeTab === 'barber-queue' && (
+                <motion.div key="barber-queue" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}>
+                  <BarberQueueScreen />
+                </motion.div>
+              )}
               {activeTab === 'book' && (
                 <motion.div key="book" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}>
-                  <CustomerBooking />
+                  <BookingScreen barberId={selectedBarberId} />
                 </motion.div>
               )}
-              {activeTab === 'schedule' && (
-                <motion.div key="schedule" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}>
-                  <BookingsList role="barber" />
-                </motion.div>
-              )}
-              {activeTab === 'bookings' && (
-                <motion.div key="bookings" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}>
-                  <BookingsList role="customer" />
+              {activeTab === 'analytics' && (
+                <motion.div key="analytics" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}>
+                  <AnalyticsScreen />
                 </motion.div>
               )}
               {activeTab === 'profile' && (
@@ -1296,9 +826,9 @@ const MainApp = () => {
                   <ProfileView />
                 </motion.div>
               )}
-              {activeTab === 'manage' && (
-                <motion.div key="manage" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}>
-                  <ServiceManager />
+              {activeTab === 'ai' && (
+                <motion.div key="ai" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}>
+                  <AISuggestionScreen />
                 </motion.div>
               )}
             </AnimatePresence>
