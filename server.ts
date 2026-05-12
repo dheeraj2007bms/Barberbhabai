@@ -24,13 +24,29 @@ async function startServer() {
 
   app.post("/api/suggest-style", async (req, res) => {
     const { hairType, faceShape, occasion } = req.body;
+    console.log("Generating suggestion for:", { hairType, faceShape, occasion });
+    
+    if (!process.env.GEMINI_API_KEY) {
+      console.error("GEMINI_API_KEY missing");
+      return res.status(500).json({ error: "Intelligence node configuration missing" });
+    }
+
     try {
-      const prompt = `Suggest a professional haircut for a man with ${hairType} hair and a ${faceShape} face shape for a ${occasion}. Keep it brief and stylish. Return only the suggestion name and a 1-sentence description.`;
+      const prompt = `You are a high-end futuristic barber consultant. Suggest a specific professional haircut for a man with ${hairType} hair and a ${faceShape} face shape for a ${occasion}. 
+      Format:
+      Style: [Style Name]
+      Reasoning: [1-2 sentences why it works]
+      Pro Tip: [Brief grooming tip]`;
+      
       const result = await model.generateContent(prompt);
       const response = await result.response;
-      res.json({ suggestion: response.text() });
+      const text = response.text();
+      
+      console.log("Suggestion generated successfully");
+      res.json({ suggestion: text });
     } catch (err) {
-      res.status(500).json({ error: "Intelligence node offline" });
+      console.error("Gemini Error:", err);
+      res.status(500).json({ error: "Intelligence node offline or blocked. Check API key and quota." });
     }
   });
 

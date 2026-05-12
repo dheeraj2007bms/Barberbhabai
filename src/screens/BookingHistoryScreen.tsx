@@ -17,12 +17,15 @@ export const BookingHistoryScreen = ({ onBack }: { onBack?: () => void }) => {
   const { user, profile } = useAuth();
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !profile) return;
+
+    // Use a loading state for the query itself
+    setLoading(true);
 
     const q = query(
       collection(db, 'bookings'),
-      where(profile?.role === 'barber' ? 'barberId' : 'customerId', '==', user.uid),
-      orderBy('createdAt', 'desc')
+      where(profile.role === 'barber' ? 'barberId' : 'customerId', '==', user.uid)
+      // Removing orderBy for now to avoid potential missing index errors during initial dev
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -30,6 +33,10 @@ export const BookingHistoryScreen = ({ onBack }: { onBack?: () => void }) => {
         id: doc.id,
         ...doc.data()
       })) as Booking[];
+      
+      // Manual sort by createdAt desc
+      data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      
       setBookings(data);
       setLoading(false);
     }, (error) => {
@@ -41,25 +48,49 @@ export const BookingHistoryScreen = ({ onBack }: { onBack?: () => void }) => {
   }, [user, profile]);
 
   const cancelBooking = async (id: string, barberId: string) => {
-    if (!confirm("Are you sure you want to cancel this booking?")) return;
     const path = `bookings/${id}`;
     try {
+      console.log('Attempting to abort mission:', id);
       await updateDoc(doc(db, 'bookings', id), {
         status: 'cancelled',
         cancelledAt: new Date().toISOString()
       });
       
-      // Create a notification for the barber
-      await addDoc(collection(db, 'notifications'), {
-        userId: barberId,
-        type: 'cancellation',
-        title: 'Engagement Aborted',
-        message: `Customer ${user?.displayName || 'Unknown'} has cancelled their booking.`,
-        createdAt: new Date().toISOString(),
-        read: false
-      });
+      // Create a notification for the other party
+      let targetUserId = barberId;
+      if (profile?.role === 'barber') {
+        const targetBooking = bookings.find(b => b.id === id);
+        if (targetBooking?.customerId) {
+          targetUserId = targetBooking.customerId;
+        }
+      }
+
+      if (targetUserId) {
+        await addDoc(collection(db, 'notifications'), {
+          userId: targetUserId,
+          type: 'cancellation',
+          title: 'Engagement Aborted',
+          message: `The mission with ${profile?.displayName || 'Unknown'} has been cancelled.`,
+          createdAt: new Date().toISOString(),
+          read: false
+        });
+      }
+      
+      alert("Mission aborted successfully. Terminal updated.");
     } catch (err) {
+      console.error('Cancellation error for booking:', id, err);
       handleFirestoreError(err, OperationType.UPDATE, path);
+    }
+  };
+
+  const formatDateSafe = (dateString: string | undefined, fallback: string) => {
+    if (!dateString) return fallback;
+    try {
+      const d = new Date(dateString);
+      if (isNaN(d.getTime())) return fallback;
+      return format(d, 'MMM d, HH:mm');
+    } catch (e) {
+      return fallback;
     }
   };
 
@@ -111,8 +142,8 @@ export const BookingHistoryScreen = ({ onBack }: { onBack?: () => void }) => {
                       <h4 className="text-sm font-bold uppercase tracking-tighter">{booking.serviceName}</h4>
                       <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mt-0.5">
                         {booking.appointmentDate 
-                          ? `Scheduled: ${format(new Date(booking.appointmentDate), 'MMM d, HH:mm')}`
-                          : `Created: ${format(new Date(booking.createdAt), 'MMM d, HH:mm')}`
+                          ? `Scheduled: ${formatDateSafe(booking.appointmentDate, 'Future Ops')}`
+                          : `Created: ${formatDateSafe(booking.createdAt, 'Known Time')}`
                         }
                       </p>
                     </div>

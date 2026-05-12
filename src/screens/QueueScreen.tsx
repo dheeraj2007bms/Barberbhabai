@@ -7,6 +7,7 @@ import {
   orderBy, 
   addDoc, 
   updateDoc,
+  setDoc,
   doc, 
   getDoc,
   deleteDoc
@@ -22,7 +23,7 @@ import { cn } from '../lib/utils';
 
 const QUEUE_ID = 'main_shop_queue'; // Simplified for demo
 
-export const QueueScreen = ({ barberId }: { barberId: string | null }) => {
+export const QueueScreen = ({ barberId, onActionComplete }: { barberId: string | null, onActionComplete?: () => void }) => {
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [barber, setBarber] = useState<BarberProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -45,8 +46,9 @@ export const QueueScreen = ({ barberId }: { barberId: string | null }) => {
         appointmentDate: bookingDate,
         createdAt: new Date().toISOString()
       });
-      alert("Appointment transmission successful.");
+      alert("Appointment transmission successful. Redirecting to systems...");
       setBookingDate('');
+      if (onActionComplete) onActionComplete();
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, path);
     } finally {
@@ -63,8 +65,7 @@ export const QueueScreen = ({ barberId }: { barberId: string | null }) => {
 
     const q = query(
       collection(db, 'queues', QUEUE_ID, 'customers'),
-      where('status', 'in', ['waiting', 'in-progress']),
-      orderBy('joinedAt', 'asc')
+      where('status', 'in', ['waiting', 'in-progress'])
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -72,6 +73,9 @@ export const QueueScreen = ({ barberId }: { barberId: string | null }) => {
         id: doc.id,
         ...doc.data()
       })) as QueueEntry[];
+      
+      // Sort client-side by joinedAt asc
+      entries.sort((a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime());
       
       setQueue(entries.map((item, index) => ({ ...item, position: index + 1 })));
       setLoading(false);
@@ -85,15 +89,20 @@ export const QueueScreen = ({ barberId }: { barberId: string | null }) => {
 
   const joinQueue = async () => {
     if (!user || !profile) return;
+    
+    if (queue.some(q => q.customerId === user.uid)) {
+      alert("Subject already identified in active sequence.");
+      return;
+    }
+
     setJoining(true);
-    const path = `queues/${QUEUE_ID}/customers`;
+    const path = `queues/${QUEUE_ID}/customers/${user.uid}`;
     try {
-      await addDoc(collection(db, 'queues', QUEUE_ID, 'customers'), {
+      await setDoc(doc(db, 'queues', QUEUE_ID, 'customers', user.uid), {
         customerId: user.uid,
         customerName: profile.displayName,
         status: 'waiting',
         joinedAt: new Date().toISOString(),
-        position: queue.length + 1
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, path);

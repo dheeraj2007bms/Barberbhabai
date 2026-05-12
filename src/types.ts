@@ -53,7 +53,7 @@ export interface QueueEntry {
   id: string;
   customerId: string;
   customerName: string;
-  status: 'waiting' | 'in-progress' | 'completed';
+  status: 'waiting' | 'in-progress' | 'completed' | 'cancelled';
   joinedAt: any;
   completedAt?: any;
   position: number;

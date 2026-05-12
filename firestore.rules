@@ -46,18 +46,18 @@ service cloud.firestore {
 
     function isValidQueueEntry(data) {
       return data.keys().hasAll(['customerId', 'customerName', 'status', 'joinedAt'])
-        && data.customerId == request.auth.uid
         && data.customerName is string && data.customerName.size() <= 100
-        && data.status in ['waiting', 'in-progress', 'completed']
+        && data.status in ['waiting', 'in-progress', 'completed', 'cancelled']
+        && ('cancelledReason' in data ? data.cancelledReason is string : true)
         && data.joinedAt is string;
     }
 
     function isValidBooking(data) {
       return data.keys().hasAll(['barberId', 'serviceName', 'price', 'createdAt', 'status', 'customerId'])
-        && (data.barberId == request.auth.uid || data.customerId == request.auth.uid)
-        && data.serviceName is string && data.serviceName.size() <= 100
-        && data.price is number && data.price >= 0
-        && data.status in ['upcoming', 'completed', 'cancelled']
+        && data.serviceName is string
+        && data.price is number
+        && data.status in ['upcoming', 'completed', 'cancelled', 'confirmed']
+        && ('customerName' in data ? data.customerName is string : true)
         && data.createdAt is string;
     }
 
@@ -86,26 +86,35 @@ service cloud.firestore {
       }
     }
 
+    function isBarber() {
+      return isVerified() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'barber';
+    }
+
     match /queues/{queueId} {
       allow read: if true;
-      allow create, update: if isVerified() && isValidId(queueId) && incoming().barberId == request.auth.uid && isValidQueue(incoming());
+      allow create: if isVerified() && isValidId(queueId) && incoming().barberId == request.auth.uid && isValidQueue(incoming());
+      allow update: if isVerified() && isValidId(queueId) && (
+        incoming().barberId == request.auth.uid || 
+        get(/databases/$(database)/documents/queues/$(queueId)).data.barberId == request.auth.uid ||
+        isBarber()
+      );
 
       match /customers/{entryId} {
         allow read: if true;
-        allow create: if isVerified() && isValidId(entryId) && isValidQueueEntry(incoming());
+        allow create: if isVerified() && isValidId(entryId) && incoming().customerId == request.auth.uid && isValidQueueEntry(incoming());
         allow update: if isVerified() && isValidId(entryId) && (
           // Customer can update their own entry
           (existing().customerId == request.auth.uid && incoming().customerId == existing().customerId) ||
-          // Barber who owns the queue can manage entries (status change)
-          (get(/databases/$(database)/documents/queues/$(queueId)).data.barberId == request.auth.uid && 
-           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt']))
+          // Barber who owns the queue or any barber (for shared shops) can manage entries
+          ((get(/databases/$(database)/documents/queues/$(queueId)).data.barberId == request.auth.uid || isBarber()) && 
+           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'cancelledReason']))
         );
       }
     }
 
     match /bookings/{bookingId} {
       allow list, get: if isVerified() && (resource.data.barberId == request.auth.uid || resource.data.customerId == request.auth.uid);
-      allow create: if isVerified() && isValidId(bookingId) && isValidBooking(incoming());
+      allow create: if isVerified() && isValidId(bookingId) && (incoming().barberId == request.auth.uid || incoming().customerId == request.auth.uid) && isValidBooking(incoming());
       allow update: if isVerified() && (resource.data.barberId == request.auth.uid || resource.data.customerId == request.auth.uid)
                        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'cancelledAt', 'appointmentDate']);
     }

@@ -803,7 +803,7 @@ const MainApp = () => {
               )}
               {activeTab === 'queue' && (
                 <motion.div key="queue" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}>
-                  <QueueScreen barberId={selectedBarberId} />
+                  <QueueScreen barberId={selectedBarberId} onActionComplete={() => setActiveTab('profile')} />
                 </motion.div>
               )}
               {activeTab === 'barber-queue' && (
@@ -813,7 +813,7 @@ const MainApp = () => {
               )}
               {activeTab === 'book' && (
                 <motion.div key="book" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}>
-                  <BookingScreen barberId={selectedBarberId} />
+                  <BookingScreen barberId={selectedBarberId} onComplete={() => setActiveTab('profile')} />
                 </motion.div>
               )}
               {activeTab === 'analytics' && (

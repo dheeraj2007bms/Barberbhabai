@@ -5,13 +5,13 @@ import { collection, addDoc, getDoc, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { BarberProfile } from '../types';
 
-export const BookingScreen = ({ barberId }: { barberId: string | null }) => {
+export const BookingScreen = ({ barberId, onComplete }: { barberId: string | null, onComplete?: () => void }) => {
   const [isHomeService, setIsHomeService] = useState(false);
   const [address, setAddress] = useState('');
   const [selectedService, setSelectedService] = useState({ name: 'Skin Fade', price: 150 });
   const [loading, setLoading] = useState(false);
   const [barber, setBarber] = useState<BarberProfile | null>(null);
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   
   React.useEffect(() => {
     if (barberId) {
@@ -25,7 +25,7 @@ export const BookingScreen = ({ barberId }: { barberId: string | null }) => {
   const totalPrice = isHomeService ? selectedService.price + HOME_SERVICE_FEE : selectedService.price;
 
   const handleBooking = async () => {
-    if (!user) return;
+    if (!user || !profile) return;
     setLoading(true);
     try {
       await addDoc(collection(db, 'bookings'), {
@@ -34,13 +34,16 @@ export const BookingScreen = ({ barberId }: { barberId: string | null }) => {
         price: totalPrice,
         createdAt: new Date().toISOString(),
         customerId: user.uid,
+        customerName: profile.displayName,
         status: 'upcoming',
         serviceType: isHomeService ? 'home' : 'shop',
         address: isHomeService ? address : ''
       });
-      alert('Operation recorded. Signal stable.');
+      alert('Operation recorded. Signal stable. Redirecting to systems...');
+      if (onComplete) onComplete();
     } catch (err) {
       console.error('Booking Error:', err);
+      alert('Synchronization failed. Signal interrupted.');
     } finally {
       setLoading(false);
     }

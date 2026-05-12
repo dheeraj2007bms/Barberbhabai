@@ -12,16 +12,30 @@ export const AISuggestionScreen = () => {
 
   const getSuggestion = async () => {
     setLoading(true);
+    setSuggestion('');
     try {
       const res = await fetch('/api/suggest-style', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ hairType, faceShape, occasion })
       });
+      
+      if (!res.ok) {
+        let errorMsg = 'Intelligence node offline or signal jammed';
+        try {
+          const errData = await res.json();
+          if (errData.error) errorMsg = errData.error;
+        } catch (e) {
+          // Fallback to default message
+        }
+        throw new Error(errorMsg);
+      }
+
       const data = await res.json();
       setSuggestion(data.suggestion);
     } catch (err) {
       console.error(err);
+      alert(err instanceof Error ? err.message : 'Unknown neural failure');
     } finally {
       setLoading(false);
     }

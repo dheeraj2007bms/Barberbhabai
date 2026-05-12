@@ -15,9 +15,9 @@ import {
   limit
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { QueueEntry, BarberProfile } from '../types';
+import { QueueEntry, BarberProfile, Booking } from '../types';
 import { useAuth } from '../lib/AuthContext';
-import { Button, Card } from '../components/ui';
+import { Button, Card, Badge } from '../components/ui';
 import { CheckCircle2, User, Play, UserX, Bell, Clock, Settings, Power } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -27,6 +27,7 @@ const QUEUE_ID = 'main_shop_queue'; // Simplified for demo
 
 export const BarberQueueScreen = () => {
   const [queue, setQueue] = useState<QueueEntry[]>([]);
+  const [upcomingBookings, setUpcomingBookings] = useState<Booking[]>([]);
   const [stats, setStats] = useState({ servedToday: 0, waitingCount: 0 });
   const [loading, setLoading] = useState(true);
   const [barberProfile, setBarberProfile] = useState<BarberProfile | null>(null);
@@ -54,15 +55,17 @@ export const BarberQueueScreen = () => {
     // 1. Listen to queue
     const q = query(
       collection(db, 'queues', QUEUE_ID, 'customers'),
-      where('status', 'in', ['waiting', 'in-progress']),
-      orderBy('joinedAt', 'asc')
+      where('status', 'in', ['waiting', 'in-progress'])
     );
 
     const unsubscribeQueue = onSnapshot(q, (snapshot) => {
-      const entries = snapshot.docs.map(doc => ({
+      let entries = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as QueueEntry[];
+      
+      // Sort client-side by joinedAt asc
+      entries.sort((a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime());
       
       setQueue(entries.map((e, index) => ({ ...e, position: index + 1 })));
       setStats(prev => ({ ...prev, waitingCount: entries.filter(e => e.status === 'waiting').length }));
@@ -84,19 +87,42 @@ export const BarberQueueScreen = () => {
     const statsQuery = query(
       collection(db, 'bookings'),
       where('barberId', '==', user.uid),
-      where('status', '==', 'completed'),
-      where('createdAt', '>=', today.toISOString())
+      where('status', '==', 'completed')
     );
     
     getDocs(statsQuery).then(snap => {
-      setStats(prev => ({ ...prev, servedToday: snap.size }));
+      // Filter manually to avoid complex indexing for now if not needed
+      const todayCount = snap.docs.filter(d => d.data().createdAt >= today.toISOString()).length;
+      setStats(prev => ({ ...prev, servedToday: todayCount }));
     }).catch(error => {
+      console.error("Stats error:", error);
+    });
+
+    // 4. Listen to upcoming bookings
+    const bq = query(
+      collection(db, 'bookings'),
+      where('barberId', '==', user.uid),
+      where('status', 'in', ['upcoming', 'confirmed'])
+    );
+
+    const unsubscribeBookings = onSnapshot(bq, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Booking[];
+      
+      // Sort client-side by createdAt desc
+      data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      
+      setUpcomingBookings(data);
+    }, (error) => {
       handleFirestoreError(error, OperationType.GET, 'bookings');
     });
 
     return () => {
       unsubscribeQueue();
       unsubscribeProfile();
+      unsubscribeBookings();
     };
   }, [user]);
 
@@ -128,15 +154,17 @@ export const BarberQueueScreen = () => {
   };
 
   const handleNoShow = async (entryId: string) => {
-    if (!confirm("Report subject as MIA (No show)? This will remove them from the active sector.")) return;
     const path = `queues/${QUEUE_ID}/customers/${entryId}`;
     try {
+      console.log('Reporting no-show for subject:', entryId);
       await updateDoc(doc(db, 'queues', QUEUE_ID, 'customers', entryId), {
         status: 'cancelled',
         cancelledReason: 'no-show',
         completedAt: new Date().toISOString()
       });
+      alert('Subject ejected from sequence.');
     } catch (err) {
+      console.error('No-show error:', err);
       handleFirestoreError(err, OperationType.UPDATE, path);
     }
   };
@@ -174,6 +202,17 @@ export const BarberQueueScreen = () => {
       setStats(prev => ({ ...prev, servedToday: prev.servedToday + 1 }));
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, path);
+    }
+  };
+
+  const formatDateSafe = (dateString: string | undefined, fallback: string) => {
+    if (!dateString) return fallback;
+    try {
+      const d = new Date(dateString);
+      if (isNaN(d.getTime())) return fallback;
+      return format(d, 'MMM d, HH:mm');
+    } catch (e) {
+      return fallback;
     }
   };
 
@@ -218,10 +257,9 @@ export const BarberQueueScreen = () => {
         </Card>
       </div>
 
-      {loading ? (
-        <div className="p-12 text-center text-[10px] uppercase font-bold text-stone-300">Decrypting satellite data...</div>
-      ) : (
+      <div className="space-y-6">
         <div className="space-y-4">
+          <h3 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest pl-1">Live Queue Units</h3>
           <AnimatePresence>
           {queue.length > 0 ? (
             queue.map((item, index) => (
@@ -309,8 +347,39 @@ export const BarberQueueScreen = () => {
             </div>
           )}
           </AnimatePresence>
+          {queue.length === 0 && (
+            <div className="py-20 text-center border-2 border-dashed border-stone-200 bg-stone-50/50 rounded-lg">
+              <p className="text-[10px] font-bold text-stone-300 uppercase tracking-[0.2em]">Queue Clear</p>
+            </div>
+          )}
         </div>
-      )}
+
+        {upcomingBookings.length > 0 && (
+          <div className="space-y-4 pt-8 border-t border-stone-200">
+            <h3 className="text-[10px] font-bold text-amber-500 uppercase tracking-widest pl-1 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
+              Scheduled Deployments
+            </h3>
+            <div className="space-y-3">
+              {upcomingBookings.map((b) => (
+                <Card key={b.id} className="p-5 bg-white border-stone-200 shadow-sm flex justify-between items-center">
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-tight">{b.customerName || 'Sync Subject'}</h4>
+                    <p className="text-[9px] text-stone-400 uppercase font-bold mt-1">
+                      {b.appointmentDate ? formatDateSafe(b.appointmentDate, 'Future Task') : 'Stasis'}
+                    </p>
+                    <Badge variant="outline" className="text-[7px] mt-2 border-amber-100 text-amber-600 bg-amber-50">{b.serviceName}</Badge>
+                  </div>
+                  <div className="flex flex-col items-end gap-2">
+                    <Badge className="text-[8px] bg-zinc-900 border-none">{b.status}</Badge>
+                    <p className="text-[8px] font-bold text-stone-300 uppercase">Coord: {b.serviceType}</p>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
