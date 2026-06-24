@@ -77,7 +77,9 @@ service cloud.firestore {
     }
 
     function isBarber() {
-      return isVerified() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'barber';
+      return isVerified() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'barber';
     }
 
     // --- Match Blocks ---
@@ -107,7 +109,7 @@ service cloud.firestore {
       allow create: if isVerified() && isValidId(queueId) && incoming().barberId == request.auth.uid && isValidQueue(incoming());
       allow update: if isVerified() && isValidId(queueId) && (
         incoming().barberId == request.auth.uid || 
-        get(/databases/$(database)/documents/queues/$(queueId)).data.barberId == request.auth.uid ||
+        (exists(/databases/$(database)/documents/queues/$(queueId)) && get(/databases/$(database)/documents/queues/$(queueId)).data.barberId == request.auth.uid) ||
         isBarber()
       );
 
@@ -117,16 +119,28 @@ service cloud.firestore {
           && incoming().customerId == request.auth.uid 
           && isValidQueueEntry(incoming())
           && (
-            (!('barberId' in incoming()) || incoming().barberId == "" 
-              ? get(/databases/$(database)/documents/barbers/$(get(/databases/$(database)/documents/queues/$(queueId)).data.barberId)).data.available == true
-              : get(/databases/$(database)/documents/barbers/$(incoming().barberId)).data.available == true)
+            (!('barberId' in incoming()) || incoming().barberId == "") 
+              ? (
+                  !exists(/databases/$(database)/documents/queues/$(queueId)) || 
+                  !exists(/databases/$(database)/documents/barbers/$(get(/databases/$(database)/documents/queues/$(queueId)).data.barberId)) ||
+                  get(/databases/$(database)/documents/barbers/$(get(/databases/$(database)/documents/queues/$(queueId)).data.barberId)).data.available == true
+                )
+              : (
+                  !exists(/databases/$(database)/documents/barbers/$(incoming().barberId)) ||
+                  get(/databases/$(database)/documents/barbers/$(incoming().barberId)).data.available == true
+                )
           );
         allow update: if isVerified() && isValidId(entryId) && (
           // Customer can update their own entry
           (existing().customerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'cancelledAt', 'cancelledReason'])) ||
           // Barber who owns the queue or any barber (for shared shops) can manage entries
-          ((get(/databases/$(database)/documents/queues/$(queueId)).data.barberId == request.auth.uid || isBarber()) && 
-           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'cancelledAt', 'cancelledReason']))
+          (
+            (
+              (exists(/databases/$(database)/documents/queues/$(queueId)) && get(/databases/$(database)/documents/queues/$(queueId)).data.barberId == request.auth.uid) || 
+              isBarber()
+            ) && 
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'cancelledAt', 'cancelledReason'])
+          )
         );
       }
     }

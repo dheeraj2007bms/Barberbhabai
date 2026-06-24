@@ -216,25 +216,18 @@ export const BarberQueueScreen = () => {
   };
 
   const handleOpenNavigation = (booking: Booking) => {
+    if (booking.address) {
+      const encodedAddress = encodeURIComponent(booking.address);
+      const url = `https://www.google.com/maps/dir/?api=1&destination=${encodedAddress}`;
+      window.open(url, '_blank');
+      return;
+    }
+
     let lat = booking.lat;
     let lng = booking.lng;
 
-    if ((lat === undefined || lng === undefined) && booking.address) {
-      // Fallback geocoding deterministically
-      const baseLat = 12.9716;
-      const baseLng = 77.5946;
-      let hash = 0;
-      for (let i = 0; i < booking.address.length; i++) {
-        hash = booking.address.charCodeAt(i) + ((hash << 5) - hash);
-      }
-      const latOffset = ((hash & 0xFF) / 255 - 0.5) * 0.1;
-      const lngOffset = (((hash >> 8) & 0xFF) / 255 - 0.5) * 0.1;
-      lat = parseFloat((baseLat + latOffset).toFixed(6));
-      lng = parseFloat((baseLng + lngOffset).toFixed(6));
-    }
-
     if (lat === undefined || lng === undefined) {
-      alert("Validation Error: No address coordinates could be determined.");
+      alert("Validation Error: No address could be determined.");
       return;
     }
 

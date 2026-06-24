@@ -2,5 +2,7 @@
   "name": "TrimTime",
   "description": "A high-performance, real-time barber queue and booking platform. Full-stack architecture with instant synchronization.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
