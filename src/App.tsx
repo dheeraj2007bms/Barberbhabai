@@ -468,9 +468,20 @@ const BarberProfileEditor = () => {
     const fetchBarber = async () => {
       try {
         const snap = await getDoc(doc(db, 'barbers', user.uid));
+        const userSnap = await getDoc(doc(db, 'users', user.uid));
+        
+        let initialData: Partial<BarberProfile> = {};
         if (snap.exists()) {
-          setProfileData(snap.data() as BarberProfile);
+          initialData = snap.data() as BarberProfile;
         }
+        
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          initialData.displayName = initialData.displayName || userData.displayName || '';
+          initialData.photoURL = initialData.photoURL || userData.photoURL || '';
+        }
+        
+        setProfileData(initialData);
       } catch (err) {
         console.error(err);
       } finally {
@@ -484,10 +495,27 @@ const BarberProfileEditor = () => {
     if (!user || !profileData) return;
     setSaving(true);
     try {
-      await updateDoc(doc(db, 'barbers', user.uid), profileData);
-      alert('NODE PERSISTED');
+      // 1. Update barbers collection
+      await updateDoc(doc(db, 'barbers', user.uid), {
+        displayName: profileData.displayName || '',
+        photoURL: profileData.photoURL || '',
+        bio: profileData.bio || '',
+        specialties: profileData.specialties || []
+      });
+
+      // 2. Sync to users collection
+      const userUpdates: any = {};
+      if (profileData.displayName) userUpdates.displayName = profileData.displayName;
+      if (profileData.photoURL) userUpdates.photoURL = profileData.photoURL;
+      
+      if (Object.keys(userUpdates).length > 0) {
+        await updateDoc(doc(db, 'users', user.uid), userUpdates);
+      }
+
+      alert('IDENTITY PARAMETERS PERSISTED');
     } catch (err) {
       console.error(err);
+      alert('Error updating identity: ' + (err as any).message);
     } finally {
       setSaving(false);
     }
@@ -503,7 +531,7 @@ const BarberProfileEditor = () => {
         <div className="space-y-1">
           <label className="text-[8px] font-bold uppercase text-stone-400 tracking-widest">Display Name</label>
           <Input 
-            value={profileData?.displayName} 
+            value={profileData?.displayName || ''} 
             onChange={e => setProfileData({ ...profileData, displayName: e.target.value })}
             placeholder="Official Designation"
           />
@@ -512,7 +540,7 @@ const BarberProfileEditor = () => {
         <div className="space-y-1">
           <label className="text-[8px] font-bold uppercase text-stone-400 tracking-widest">Photo URL</label>
           <Input 
-            value={profileData?.photoURL} 
+            value={profileData?.photoURL || ''} 
             onChange={e => setProfileData({ ...profileData, photoURL: e.target.value })}
             placeholder="https://..."
           />
@@ -522,8 +550,9 @@ const BarberProfileEditor = () => {
           <label className="text-[8px] font-bold uppercase text-stone-400 tracking-widest">Bio / Mission</label>
           <textarea 
             className="w-full border border-stone-200 p-4 text-xs font-bold uppercase tracking-widest focus:border-zinc-900 focus:outline-none min-h-[100px]"
-            value={profileData?.bio} 
+            value={profileData?.bio || ''} 
             onChange={e => setProfileData({ ...profileData, bio: e.target.value })}
+            placeholder="Expert barber from TrimTime"
           />
         </div>
 
@@ -533,7 +562,7 @@ const BarberProfileEditor = () => {
             <div className="flex items-center gap-2">
               <Star size={10} className="fill-zinc-900 text-zinc-900" />
               <span className="text-xs font-bold uppercase tracking-tighter">
-                {profileData.rating} ({profileData.reviewCount} Reviews)
+                {profileData.rating} ({profileData.reviewCount || 0} Reviews)
               </span>
             </div>
           </div>
@@ -542,8 +571,9 @@ const BarberProfileEditor = () => {
         <div className="space-y-1">
           <label className="text-[8px] font-bold uppercase text-stone-400 tracking-widest">Specialties (comma separated)</label>
           <Input 
-            value={profileData?.specialties?.join(', ')} 
-            onChange={e => setProfileData({ ...profileData, specialties: e.target.value.split(',').map(s => s.trim()) })}
+            value={(profileData?.specialties || []).join(', ')} 
+            onChange={e => setProfileData({ ...profileData, specialties: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+            placeholder="Classic Cut, Shave, Fade..."
           />
         </div>
       </div>
@@ -589,8 +619,19 @@ const NotificationsView = () => {
 };
 
 const ProfileView = () => {
-  const { profile, logout } = useAuth();
+  const { user, profile, logout } = useAuth();
   const [activeSubView, setActiveSubView] = useState<'main' | 'schedule' | 'identity' | 'services' | 'history' | 'alerts'>('main');
+  const [barberDoc, setBarberDoc] = useState<any>(null);
+
+  useEffect(() => {
+    if (!user || profile?.role !== 'barber') return;
+    const unsubscribe = onSnapshot(doc(db, 'barbers', user.uid), (snap) => {
+      if (snap.exists()) {
+        setBarberDoc(snap.data());
+      }
+    });
+    return () => unsubscribe();
+  }, [user, profile]);
 
   if (activeSubView === 'alerts') {
     return (
@@ -697,18 +738,18 @@ const ProfileView = () => {
               <div className="space-y-1">
                 <p className="text-[8px] font-bold text-stone-400 uppercase tracking-widest">Bio</p>
                 <p className="text-xs text-stone-600 line-clamp-3 leading-relaxed italic">
-                  {profile.bio || 'Mission data not initialized.'}
+                  {barberDoc?.bio || 'Mission data not initialized.'}
                 </p>
               </div>
               <div className="space-y-1">
                 <p className="text-[8px] font-bold text-stone-400 uppercase tracking-widest">Specialties</p>
                 <div className="flex flex-wrap gap-1">
-                  {(profile.specialties || []).map(s => (
+                  {(barberDoc?.specialties || []).map((s: string) => (
                     <span key={s} className="px-2 py-0.5 bg-white border border-stone-100 text-[8px] font-bold uppercase text-stone-400">
                       {s}
                     </span>
                   ))}
-                  {(!profile.specialties || profile.specialties.length === 0) && (
+                  {(!barberDoc?.specialties || barberDoc.specialties.length === 0) && (
                     <span className="text-[8px] font-bold uppercase text-stone-300">None defined</span>
                   )}
                 </div>

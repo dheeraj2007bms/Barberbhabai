@@ -56,7 +56,7 @@ service cloud.firestore {
       return data.keys().hasAll(['barberId', 'serviceName', 'price', 'createdAt', 'status', 'customerId'])
         && data.serviceName is string
         && data.price is number
-        && data.status in ['upcoming', 'completed', 'cancelled', 'confirmed']
+        && data.status in ['pending', 'upcoming', 'completed', 'cancelled', 'confirmed', 'rejected', 'accepted']
         && ('customerName' in data ? data.customerName is string : true)
         && data.createdAt is string;
     }
@@ -66,6 +66,18 @@ service cloud.firestore {
         && data.customerId == request.auth.uid
         && data.rating is number && data.rating >= 1 && data.rating <= 5
         && data.createdAt is string;
+    }
+
+    function isValidService(data) {
+      return data.keys().hasAll(['name', 'price', 'durationMinutes', 'category'])
+        && data.name is string && data.name.size() <= 100
+        && data.price is number
+        && data.durationMinutes is number
+        && data.category is string;
+    }
+
+    function isBarber() {
+      return isVerified() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'barber';
     }
 
     // --- Match Blocks ---
@@ -78,16 +90,16 @@ service cloud.firestore {
 
     match /barbers/{barberId} {
       allow read: if true;
-      allow create, update: if isVerified() && barberId == request.auth.uid;
+      allow create: if isVerified() && barberId == request.auth.uid;
+      allow update: if isVerified() && (
+        barberId == request.auth.uid ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['rating', 'reviewCount'])
+      );
 
       match /reviews/{reviewId} {
         allow read: if true;
         allow create: if isVerified() && isValidReview(incoming());
       }
-    }
-
-    function isBarber() {
-      return isVerified() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'barber';
     }
 
     match /queues/{queueId} {
@@ -104,7 +116,7 @@ service cloud.firestore {
         allow create: if isVerified() && isValidId(entryId) && incoming().customerId == request.auth.uid && isValidQueueEntry(incoming());
         allow update: if isVerified() && isValidId(entryId) && (
           // Customer can update their own entry
-          (existing().customerId == request.auth.uid && incoming().customerId == existing().customerId) ||
+          (existing().customerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'cancelledReason'])) ||
           // Barber who owns the queue or any barber (for shared shops) can manage entries
           ((get(/databases/$(database)/documents/queues/$(queueId)).data.barberId == request.auth.uid || isBarber()) && 
            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'cancelledReason']))
@@ -122,6 +134,12 @@ service cloud.firestore {
     match /notifications/{notificationId} {
       allow read, update: if isVerified() && resource.data.userId == request.auth.uid;
       allow create: if isVerified();
+    }
+
+    match /services/{serviceId} {
+      allow read: if true;
+      allow create, update: if isVerified() && isBarber() && isValidService(incoming());
+      allow delete: if isVerified() && isBarber();
     }
 
     match /_connection_test_/{docId} {

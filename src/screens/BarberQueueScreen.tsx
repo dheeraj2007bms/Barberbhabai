@@ -98,11 +98,11 @@ export const BarberQueueScreen = () => {
       console.error("Stats error:", error);
     });
 
-    // 4. Listen to upcoming bookings
+    // 4. Listen to upcoming and pending bookings
     const bq = query(
       collection(db, 'bookings'),
       where('barberId', '==', user.uid),
-      where('status', 'in', ['upcoming', 'confirmed'])
+      where('status', 'in', ['pending', 'upcoming', 'confirmed', 'accepted'])
     );
 
     const unsubscribeBookings = onSnapshot(bq, (snapshot) => {
@@ -125,6 +125,95 @@ export const BarberQueueScreen = () => {
       unsubscribeBookings();
     };
   }, [user]);
+
+  // Barber Reminders effect
+  useEffect(() => {
+    if (!user || upcomingBookings.length === 0) return;
+    
+    const generateTodayReminders = async () => {
+      try {
+        const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        
+        // Filter active bookings for today
+        const todayBookings = upcomingBookings.filter(b => {
+          if (!b.appointmentDate) return false;
+          const statusMatch = b.status === 'confirmed' || b.status === 'accepted';
+          return b.appointmentDate.startsWith(todayStr) && statusMatch;
+        });
+        
+        if (todayBookings.length === 0) return;
+        
+        // Fetch existing reminders to prevent duplicates
+        const notifSnap = await getDocs(query(
+          collection(db, 'notifications'),
+          where('userId', '==', user.uid),
+          where('type', '==', 'appointment_reminder')
+        ));
+        const existingMsgIds = new Set(notifSnap.docs.map(doc => doc.data().bookingId));
+        
+        for (const booking of todayBookings) {
+          if (!existingMsgIds.has(booking.id)) {
+            await addDoc(collection(db, 'notifications'), {
+              userId: user.uid,
+              bookingId: booking.id,
+              type: 'appointment_reminder',
+              title: 'Tactical Deployment Today!',
+              message: `Reminder: Confirmed appointment for ${booking.customerName} today at ${booking.appointmentDate.split(' ')[1] || ''} (${booking.serviceName}).`,
+              createdAt: new Date().toISOString(),
+              read: false
+            });
+          }
+        }
+      } catch (e) {
+        console.error("Error generating reminders:", e);
+      }
+    };
+    
+    generateTodayReminders();
+  }, [user, upcomingBookings]);
+
+  const approveBooking = async (booking: Booking) => {
+    const nextStatus = booking.serviceType === 'home' ? 'accepted' : 'confirmed';
+    try {
+      await updateDoc(doc(db, 'bookings', booking.id), {
+        status: nextStatus
+      });
+      // Notify customer
+      await addDoc(collection(db, 'notifications'), {
+        userId: booking.customerId,
+        type: 'booking_approval',
+        title: booking.serviceType === 'home' ? 'Home Service Accepted!' : 'Appointment Confirmed!',
+        message: `Your grooming request for ${booking.serviceName} on ${booking.appointmentDate || ''} has been accepted by the specialist.`,
+        createdAt: new Date().toISOString(),
+        read: false
+      });
+      alert('Booking request approved. Customer notified.');
+    } catch (e) {
+      console.error(e);
+      alert('Error approving booking.');
+    }
+  };
+
+  const rejectBooking = async (booking: Booking) => {
+    try {
+      await updateDoc(doc(db, 'bookings', booking.id), {
+        status: 'rejected'
+      });
+      // Notify customer
+      await addDoc(collection(db, 'notifications'), {
+        userId: booking.customerId,
+        type: 'booking_rejection',
+        title: 'Booking Request Declined',
+        message: `Your grooming request for ${booking.serviceName} on ${booking.appointmentDate || ''} was declined by the specialist.`,
+        createdAt: new Date().toISOString(),
+        read: false
+      });
+      alert('Booking request declined. Customer notified.');
+    } catch (e) {
+      console.error(e);
+      alert('Error declining booking.');
+    }
+  };
 
   const startService = async (entryId: string) => {
     const path = `queues/${QUEUE_ID}/customers/${entryId}`;
@@ -354,31 +443,89 @@ export const BarberQueueScreen = () => {
           )}
         </div>
 
-        {upcomingBookings.length > 0 && (
-          <div className="space-y-4 pt-8 border-t border-stone-200">
-            <h3 className="text-[10px] font-bold text-amber-500 uppercase tracking-widest pl-1 flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
-              Scheduled Deployments
-            </h3>
-            <div className="space-y-3">
-              {upcomingBookings.map((b) => (
-                <Card key={b.id} className="p-5 bg-white border-stone-200 shadow-sm flex justify-between items-center">
-                  <div>
-                    <h4 className="text-xs font-bold uppercase tracking-tight">{b.customerName || 'Sync Subject'}</h4>
-                    <p className="text-[9px] text-stone-400 uppercase font-bold mt-1">
-                      {b.appointmentDate ? formatDateSafe(b.appointmentDate, 'Future Task') : 'Stasis'}
-                    </p>
-                    <Badge variant="outline" className="text-[7px] mt-2 border-amber-100 text-amber-600 bg-amber-50">{b.serviceName}</Badge>
+        {(() => {
+          const pendingBookings = upcomingBookings.filter(b => b.status === 'pending');
+          const activeBookings = upcomingBookings.filter(b => ['confirmed', 'accepted', 'upcoming'].includes(b.status));
+
+          return (
+            <div className="space-y-8">
+              {pendingBookings.length > 0 && (
+                <div className="space-y-4 pt-8 border-t border-stone-200">
+                  <h3 className="text-[10px] font-bold text-amber-500 uppercase tracking-widest pl-1 flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
+                    Pending Approvals ({pendingBookings.length})
+                  </h3>
+                  <div className="space-y-3">
+                    {pendingBookings.map((b) => (
+                      <Card key={b.id} className="p-5 bg-white border-stone-200 shadow-sm flex flex-col gap-4">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h4 className="text-xs font-bold uppercase tracking-tight">{b.customerName || 'Sync Subject'}</h4>
+                            <p className="text-[9px] text-stone-400 uppercase font-bold mt-1">
+                              {b.appointmentDate ? formatDateSafe(b.appointmentDate, 'Future Task') : 'Stasis'}
+                            </p>
+                            <Badge variant="outline" className="text-[7px] mt-2 border-amber-100 text-amber-600 bg-amber-50">{b.serviceName}</Badge>
+                          </div>
+                          <div className="text-right flex flex-col items-end">
+                            <Badge className="text-[8px] bg-amber-500 border-none text-white">{b.status}</Badge>
+                            <p className="text-[8px] font-bold text-stone-400 uppercase mt-1">Coord: {b.serviceType}</p>
+                          </div>
+                        </div>
+
+                        {b.serviceType === 'home' && b.address && (
+                          <div className="p-3 bg-red-50/50 border border-red-100/50 text-[10px] font-mono text-zinc-700">
+                            <p className="text-[8px] font-bold text-red-500 uppercase tracking-widest mb-1">Target Address</p>
+                            {b.address}
+                          </div>
+                        )}
+
+                        <div className="flex gap-2 border-t border-stone-50 pt-3">
+                          <Button size="sm" className="flex-1 text-[9px] bg-zinc-900 text-white" onClick={() => approveBooking(b)}>Accept Request</Button>
+                          <Button size="sm" variant="outline" className="flex-1 text-[9px] text-red-500 border-stone-200 hover:bg-red-50" onClick={() => rejectBooking(b)}>Decline</Button>
+                        </div>
+                      </Card>
+                    ))}
                   </div>
-                  <div className="flex flex-col items-end gap-2">
-                    <Badge className="text-[8px] bg-zinc-900 border-none">{b.status}</Badge>
-                    <p className="text-[8px] font-bold text-stone-300 uppercase">Coord: {b.serviceType}</p>
+                </div>
+              )}
+
+              {activeBookings.length > 0 && (
+                <div className="space-y-4 pt-8 border-t border-stone-200">
+                  <h3 className="text-[10px] font-bold text-zinc-900 uppercase tracking-widest pl-1 flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 bg-zinc-900 rounded-full animate-pulse" />
+                    Scheduled Deployments
+                  </h3>
+                  <div className="space-y-3">
+                    {activeBookings.map((b) => (
+                      <Card key={b.id} className="p-5 bg-white border-stone-200 shadow-sm flex flex-col gap-4">
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <h4 className="text-xs font-bold uppercase tracking-tight">{b.customerName || 'Sync Subject'}</h4>
+                            <p className="text-[9px] text-stone-400 uppercase font-bold mt-1">
+                              {b.appointmentDate ? formatDateSafe(b.appointmentDate, 'Future Task') : 'Stasis'}
+                            </p>
+                            <Badge variant="outline" className="text-[7px] mt-2 border-amber-100 text-amber-600 bg-amber-50">{b.serviceName}</Badge>
+                          </div>
+                          <div className="text-right flex flex-col items-end gap-2">
+                            <Badge className="text-[8px] bg-zinc-900 border-none">{b.status}</Badge>
+                            <p className="text-[8px] font-bold text-stone-300 uppercase">Coord: {b.serviceType}</p>
+                          </div>
+                        </div>
+
+                        {b.serviceType === 'home' && b.address && (
+                          <div className="p-3 bg-red-50/50 border border-red-100/50 text-[10px] font-mono text-zinc-700">
+                            <p className="text-[8px] font-bold text-red-500 uppercase tracking-widest mb-1">Target Address</p>
+                            {b.address}
+                          </div>
+                        )}
+                      </Card>
+                    ))}
                   </div>
-                </Card>
-              ))}
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     </div>
   );

@@ -96,8 +96,8 @@ export const BookingHistoryScreen = ({ onBack }: { onBack?: () => void }) => {
 
   const filteredBookings = bookings.filter(b => 
     activeTab === 'upcoming' 
-      ? ['upcoming', 'confirmed'].includes(b.status) 
-      : ['completed', 'cancelled'].includes(b.status)
+      ? ['pending', 'upcoming', 'confirmed', 'accepted'].includes(b.status) 
+      : ['completed', 'cancelled', 'rejected'].includes(b.status)
   );
 
   if (loading) return <div className="p-8 text-center text-[10px] font-bold uppercase tracking-widest text-stone-300">Synchronizing temporal nodes...</div>;
@@ -148,15 +148,25 @@ export const BookingHistoryScreen = ({ onBack }: { onBack?: () => void }) => {
                       </p>
                     </div>
                   </div>
-                  <Badge className={`text-[8px] py-0 h-4 ${
+                  <Badge className={`text-[8px] py-0 h-5 ${
                     booking.status === 'completed' ? 'bg-green-100 text-green-700 border-green-200' :
                     booking.status === 'cancelled' ? 'bg-red-100 text-red-700 border-red-200' :
+                    booking.status === 'rejected' ? 'bg-rose-100 text-rose-700 border-rose-200' :
+                    booking.status === 'pending' ? 'bg-amber-100 text-amber-700 border-amber-200 animate-pulse' :
                     booking.status === 'confirmed' ? 'bg-blue-100 text-blue-700 border-blue-200' :
+                    booking.status === 'accepted' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' :
                     'bg-zinc-900 text-white'
                   }`}>
                     {booking.status}
                   </Badge>
                 </div>
+
+                {booking.serviceType === 'home' && booking.address && (
+                  <div className="p-3 bg-red-50/50 border border-red-100/50 text-[10px] font-mono text-zinc-700">
+                    <p className="text-[8px] font-bold text-red-500 uppercase tracking-widest mb-1">Target Address</p>
+                    {booking.address}
+                  </div>
+                )}
 
                 <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest border-t border-stone-50 pt-4">
                   <span className="text-stone-400">Assignment Value</span>

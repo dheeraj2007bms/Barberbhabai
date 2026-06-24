@@ -48,11 +48,14 @@
         "barberId": { "type": "string" },
         "serviceName": { "type": "string" },
         "price": { "type": "number" },
-        "status": { "type": "string", "enum": ["upcoming", "completed", "cancelled", "confirmed"] },
-        "appointmentDate": { "type": "string", "format": "date-time" },
-        "createdAt": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["pending", "upcoming", "completed", "cancelled", "confirmed", "rejected", "accepted"] },
+        "appointmentDate": { "type": "string" },
+        "createdAt": { "type": "string" },
         "customerId": { "type": "string" },
-        "cancelledAt": { "type": "string", "format": "date-time" }
+        "customerName": { "type": "string" },
+        "serviceType": { "type": "string", "enum": ["shop", "home"] },
+        "address": { "type": "string" },
+        "cancelledAt": { "type": "string" }
       },
       "required": ["barberId", "serviceName", "price", "createdAt", "status"]
     },
@@ -83,6 +86,19 @@
         "specialties": { "type": "array", "items": { "type": "string" } }
       },
       "required": ["userId", "displayName"]
+    },
+    "Service": {
+      "title": "Service",
+      "description": "Service menu items",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "durationMinutes": { "type": "number" },
+        "category": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["name", "price", "durationMinutes", "category"]
     }
   },
   "firestore": {
@@ -113,6 +129,10 @@
     "/notifications/{notificationId}": {
       "schema": "object",
       "description": "System alerts and notifications"
+    },
+    "/services/{serviceId}": {
+      "schema": "Service",
+      "description": "Available service items"
     }
   }
 }
