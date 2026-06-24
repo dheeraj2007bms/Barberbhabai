@@ -65,12 +65,14 @@ export interface Booking {
   customerId: string;
   serviceName: string;
   price: number;
-  status: 'upcoming' | 'completed' | 'cancelled' | 'confirmed';
+  status: 'pending' | 'upcoming' | 'completed' | 'cancelled' | 'confirmed' | 'rejected' | 'accepted';
   appointmentDate?: string;
   createdAt: any;
   serviceType?: 'home' | 'shop';
   address?: string;
   cancelledAt?: string;
+  lat?: number;
+  lng?: number;
 }
 
 export interface Review {

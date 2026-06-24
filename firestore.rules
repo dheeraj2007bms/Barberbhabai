@@ -113,13 +113,20 @@ service cloud.firestore {
 
       match /customers/{entryId} {
         allow read: if true;
-        allow create: if isVerified() && isValidId(entryId) && incoming().customerId == request.auth.uid && isValidQueueEntry(incoming());
+        allow create: if isVerified() && isValidId(entryId) 
+          && incoming().customerId == request.auth.uid 
+          && isValidQueueEntry(incoming())
+          && (
+            (!('barberId' in incoming()) || incoming().barberId == "" 
+              ? get(/databases/$(database)/documents/barbers/$(get(/databases/$(database)/documents/queues/$(queueId)).data.barberId)).data.available == true
+              : get(/databases/$(database)/documents/barbers/$(incoming().barberId)).data.available == true)
+          );
         allow update: if isVerified() && isValidId(entryId) && (
           // Customer can update their own entry
-          (existing().customerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'cancelledReason'])) ||
+          (existing().customerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'cancelledAt', 'cancelledReason'])) ||
           // Barber who owns the queue or any barber (for shared shops) can manage entries
           ((get(/databases/$(database)/documents/queues/$(queueId)).data.barberId == request.auth.uid || isBarber()) && 
-           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'cancelledReason']))
+           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'cancelledAt', 'cancelledReason']))
         );
       }
     }

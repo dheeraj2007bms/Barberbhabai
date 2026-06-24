@@ -215,6 +215,34 @@ export const BarberQueueScreen = () => {
     }
   };
 
+  const handleOpenNavigation = (booking: Booking) => {
+    let lat = booking.lat;
+    let lng = booking.lng;
+
+    if ((lat === undefined || lng === undefined) && booking.address) {
+      // Fallback geocoding deterministically
+      const baseLat = 12.9716;
+      const baseLng = 77.5946;
+      let hash = 0;
+      for (let i = 0; i < booking.address.length; i++) {
+        hash = booking.address.charCodeAt(i) + ((hash << 5) - hash);
+      }
+      const latOffset = ((hash & 0xFF) / 255 - 0.5) * 0.1;
+      const lngOffset = (((hash >> 8) & 0xFF) / 255 - 0.5) * 0.1;
+      lat = parseFloat((baseLat + latOffset).toFixed(6));
+      lng = parseFloat((baseLng + lngOffset).toFixed(6));
+    }
+
+    if (lat === undefined || lng === undefined) {
+      alert("Validation Error: No address coordinates could be determined.");
+      return;
+    }
+
+    console.log(`Launching navigation to coordinates: ${lat}, ${lng}`);
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+    window.open(url, '_blank');
+  };
+
   const startService = async (entryId: string) => {
     const path = `queues/${QUEUE_ID}/customers/${entryId}`;
     try {
@@ -513,9 +541,21 @@ export const BarberQueueScreen = () => {
                         </div>
 
                         {b.serviceType === 'home' && b.address && (
-                          <div className="p-3 bg-red-50/50 border border-red-100/50 text-[10px] font-mono text-zinc-700">
-                            <p className="text-[8px] font-bold text-red-500 uppercase tracking-widest mb-1">Target Address</p>
-                            {b.address}
+                          <div className="space-y-3">
+                            <div className="p-3 bg-red-50/50 border border-red-100/50 text-[10px] font-mono text-zinc-700">
+                              <p className="text-[8px] font-bold text-red-500 uppercase tracking-widest mb-1">Target Address</p>
+                              {b.address}
+                            </div>
+                            {['accepted', 'confirmed', 'upcoming'].includes(b.status) && (
+                              <Button 
+                                size="sm" 
+                                className="w-full text-[9px] bg-zinc-900 text-white hover:bg-black transition-colors py-2.5 flex items-center justify-center gap-2" 
+                                onClick={() => handleOpenNavigation(b)}
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-navigation"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+                                Open Navigation
+                              </Button>
+                            )}
                           </div>
                         )}
                       </Card>

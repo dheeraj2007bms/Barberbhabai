@@ -65,14 +65,28 @@ export const BookingScreen = ({ barberId, onComplete }: { barberId: string | nul
 
     try {
       const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-      const dateObj = new Date(selectedDate);
+      const dateParts = selectedDate.split('-');
+      const year = parseInt(dateParts[0], 10);
+      const month = parseInt(dateParts[1], 10) - 1;
+      const day = parseInt(dateParts[2], 10);
+      const dateObj = new Date(year, month, day);
       if (isNaN(dateObj.getTime())) {
         setAvailabilityMessage('Invalid target date coordinates.');
         setIsAvailable(false);
         return;
       }
       const dayOfWeek = days[dateObj.getDay()];
-      const hoursConfig = selectedBarber.workingHours?.[dayOfWeek];
+      
+      const barberHours = selectedBarber.workingHours || {
+        monday: { start: '09:00', end: '17:00', enabled: true },
+        tuesday: { start: '09:00', end: '17:00', enabled: true },
+        wednesday: { start: '09:00', end: '17:00', enabled: true },
+        thursday: { start: '09:00', end: '17:00', enabled: true },
+        friday: { start: '09:00', end: '17:00', enabled: true },
+        saturday: { start: '10:00', end: '14:00', enabled: true },
+        sunday: { start: '10:00', end: '14:00', enabled: false },
+      };
+      const hoursConfig = barberHours[dayOfWeek as keyof typeof barberHours];
       
       if (!hoursConfig || !hoursConfig.enabled) {
         setAvailabilityMessage(`Specialist is offline on ${dayOfWeek.toUpperCase()}.`);
@@ -142,6 +156,24 @@ export const BookingScreen = ({ barberId, onComplete }: { barberId: string | nul
       const apptDate = `${selectedDate} ${selectedTime}`;
       console.log('Writing booking record to Firestore...');
 
+      // Generate coordinates deterministically from address for Home Service
+      let lat: number | undefined = undefined;
+      let lng: number | undefined = undefined;
+
+      if (isHomeService && address.trim()) {
+        const baseLat = 12.9716;
+        const baseLng = 77.5946;
+        let hash = 0;
+        for (let i = 0; i < address.length; i++) {
+          hash = address.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        const latOffset = ((hash & 0xFF) / 255 - 0.5) * 0.1;
+        const lngOffset = (((hash >> 8) & 0xFF) / 255 - 0.5) * 0.1;
+        lat = parseFloat((baseLat + latOffset).toFixed(6));
+        lng = parseFloat((baseLng + lngOffset).toFixed(6));
+        console.log(`Geocoded coordinates for address "${address}":`, { lat, lng });
+      }
+
       const docRef = await addDoc(collection(db, 'bookings'), {
         barberId: selectedBarberId,
         serviceName: selectedService.name,
@@ -152,7 +184,8 @@ export const BookingScreen = ({ barberId, onComplete }: { barberId: string | nul
         status: 'pending',
         serviceType: isHomeService ? 'home' : 'shop',
         address: isHomeService ? address : '',
-        appointmentDate: apptDate
+        appointmentDate: apptDate,
+        ...(lat !== undefined && lng !== undefined ? { lat, lng } : {})
       });
 
       console.log('Booking document created successfully:', docRef.id);
