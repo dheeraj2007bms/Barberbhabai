@@ -31,7 +31,8 @@ export const BarberQueueScreen = () => {
   const [stats, setStats] = useState({ servedToday: 0, waitingCount: 0 });
   const [loading, setLoading] = useState(true);
   const [barberProfile, setBarberProfile] = useState<BarberProfile | null>(null);
-  const { user } = useAuth();
+  const [queueOwnerId, setQueueOwnerId] = useState<string | null>(null);
+  const { user, profile } = useAuth();
 
   useEffect(() => {
     if (!user) return;
@@ -45,6 +46,9 @@ export const BarberQueueScreen = () => {
             barberId: user.uid,
             shopId: 'prime_alpha'
           });
+          setQueueOwnerId(user.uid);
+        } else {
+          setQueueOwnerId(queueDoc.data()?.barberId || null);
         }
       } catch (err) {
         console.error("Queue init error:", err);
@@ -237,6 +241,10 @@ export const BarberQueueScreen = () => {
   };
 
   const startService = async (entryId: string) => {
+    if (queueOwnerId && queueOwnerId !== user?.uid) {
+      alert("Unauthorized: You do not own this queue.");
+      return;
+    }
     const path = `queues/${QUEUE_ID}/customers/${entryId}`;
     try {
       await updateDoc(doc(db, 'queues', QUEUE_ID, 'customers', entryId), {
@@ -248,6 +256,10 @@ export const BarberQueueScreen = () => {
   };
 
   const notifyCustomer = async (entry: QueueEntry) => {
+    if (queueOwnerId && queueOwnerId !== user?.uid) {
+      alert("Unauthorized: You do not own this queue.");
+      return;
+    }
     const path = 'notifications';
     try {
       await addDoc(collection(db, 'notifications'), {
@@ -264,6 +276,10 @@ export const BarberQueueScreen = () => {
   };
 
   const handleNoShow = async (entryId: string) => {
+    if (queueOwnerId && queueOwnerId !== user?.uid) {
+      alert("Unauthorized: You do not own this queue.");
+      return;
+    }
     const path = `queues/${QUEUE_ID}/customers/${entryId}`;
     try {
       console.log('Reporting no-show for subject:', entryId);
@@ -293,6 +309,10 @@ export const BarberQueueScreen = () => {
 
   const markCompleted = async (entry: QueueEntry) => {
     if (!user) return;
+    if (queueOwnerId && queueOwnerId !== user?.uid) {
+      alert("Unauthorized: You do not own this queue.");
+      return;
+    }
     const path = `queues/${QUEUE_ID}/customers/${entry.id}`;
     try {
       const batch = writeBatch(db);
@@ -325,6 +345,17 @@ export const BarberQueueScreen = () => {
       return fallback;
     }
   };
+
+  if (profile?.role !== 'barber') {
+    return (
+      <div className="flex-1 p-8 bg-stone-50 min-h-screen flex flex-col items-center justify-center text-center">
+        <h3 className="text-sm font-bold uppercase tracking-widest text-red-600 mb-2">Access Denied</h3>
+        <p className="text-[10px] text-stone-400 uppercase tracking-widest leading-relaxed">
+          The Barber Console is restricted to authorized operators.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 p-6 bg-stone-50 min-h-screen pb-32">
@@ -411,42 +442,44 @@ export const BarberQueueScreen = () => {
                   </div>
                 </div>
 
-                <div className="flex gap-2 border-t border-stone-50 pt-4">
-                  {item.status === 'waiting' && index === 0 && (
-                    <>
+                {(!queueOwnerId || queueOwnerId === user?.uid) && (
+                  <div className="flex gap-2 border-t border-stone-50 pt-4">
+                    {item.status === 'waiting' && index === 0 && (
+                      <>
+                        <Button 
+                          onClick={() => startService(item.id)}
+                          className="flex-1 bg-zinc-900 text-white h-12 text-[10px]"
+                        >
+                          <Play size={14} className="mr-2" />
+                          Commence Engagement
+                        </Button>
+                        <Button 
+                          variant="outline"
+                          onClick={() => notifyCustomer(item)}
+                          className="p-3 border-stone-200"
+                        >
+                          <Bell size={14} />
+                        </Button>
+                      </>
+                    )}
+                    {item.status === 'in-progress' && (
                       <Button 
-                        onClick={() => startService(item.id)}
+                        onClick={() => markCompleted(item)}
                         className="flex-1 bg-zinc-900 text-white h-12 text-[10px]"
                       >
-                        <Play size={14} className="mr-2" />
-                        Commence Engagement
+                        <CheckCircle2 size={14} className="mr-2" />
+                        De-brief / Complete
                       </Button>
-                      <Button 
-                        variant="outline"
-                        onClick={() => notifyCustomer(item)}
-                        className="p-3 border-stone-200"
-                      >
-                        <Bell size={14} />
-                      </Button>
-                    </>
-                  )}
-                  {item.status === 'in-progress' && (
+                    )}
                     <Button 
-                      onClick={() => markCompleted(item)}
-                      className="flex-1 bg-zinc-900 text-white h-12 text-[10px]"
+                      variant="ghost" 
+                      onClick={() => handleNoShow(item.id)}
+                      className="px-3 text-red-500 hover:bg-red-50 border border-transparent hover:border-red-100"
                     >
-                      <CheckCircle2 size={14} className="mr-2" />
-                      De-brief / Complete
+                      <UserX size={14} />
                     </Button>
-                  )}
-                  <Button 
-                    variant="ghost" 
-                    onClick={() => handleNoShow(item.id)}
-                    className="px-3 text-red-500 hover:bg-red-50 border border-transparent hover:border-red-100"
-                  >
-                    <UserX size={14} />
-                  </Button>
-                </div>
+                  </div>
+                )}
               </motion.div>
             ))
           ) : (

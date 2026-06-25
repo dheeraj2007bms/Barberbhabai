@@ -394,9 +394,9 @@ export const QueueScreen = ({ barberId, onActionComplete }: { barberId: string |
                         </span>
                         <span className={cn(
                           "font-bold uppercase tracking-tight",
-                          item.customerId === user?.uid ? 'text-zinc-900 font-black' : 'text-stone-600'
+                          item.customerId === user?.uid ? 'text-zinc-900 font-black' : 'text-stone-400'
                         )}>
-                          {item.customerId === user?.uid ? 'You' : item.customerName || 'Anonymous Client'}
+                          {item.customerId === user?.uid ? 'You' : `Standby Client #${item.position}`}
                         </span>
                       </div>
                       <Badge variant="outline" className={cn(

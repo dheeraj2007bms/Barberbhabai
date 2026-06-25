@@ -28,36 +28,6 @@ async function startServer() {
     res.json({ status: "operational", version: "1.0.4" });
   });
 
-  app.post("/api/suggest-style", async (req, res) => {
-    const { hairType, faceShape, occasion } = req.body;
-    console.log("Generating suggestion for:", { hairType, faceShape, occasion });
-    
-    if (!process.env.GEMINI_API_KEY) {
-      console.error("GEMINI_API_KEY missing");
-      return res.status(500).json({ error: "Intelligence node configuration missing" });
-    }
-
-    try {
-      const prompt = `You are a high-end futuristic barber consultant. Suggest a specific professional haircut for a man with ${hairType} hair and a ${faceShape} face shape for a ${occasion}. 
-      Format:
-      Style: [Style Name]
-      Reasoning: [1-2 sentences why it works]
-      Pro Tip: [Brief grooming tip]`;
-      
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-      });
-      const text = response.text;
-      
-      console.log("Suggestion generated successfully");
-      res.json({ suggestion: text });
-    } catch (err) {
-      console.error("Gemini Error:", err);
-      res.status(500).json({ error: "Intelligence node offline or blocked. Check API key and quota." });
-    }
-  });
-
   // Vite integration
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

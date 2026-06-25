@@ -106,11 +106,10 @@ service cloud.firestore {
 
     match /queues/{queueId} {
       allow read: if true;
-      allow create: if isVerified() && isValidId(queueId) && incoming().barberId == request.auth.uid && isValidQueue(incoming());
-      allow update: if isVerified() && isValidId(queueId) && (
+      allow create: if isVerified() && isValidId(queueId) && isBarber() && incoming().barberId == request.auth.uid && isValidQueue(incoming());
+      allow update: if isVerified() && isValidId(queueId) && isBarber() && (
         incoming().barberId == request.auth.uid || 
-        (exists(/databases/$(database)/documents/queues/$(queueId)) && get(/databases/$(database)/documents/queues/$(queueId)).data.barberId == request.auth.uid) ||
-        isBarber()
+        (exists(/databases/$(database)/documents/queues/$(queueId)) && get(/databases/$(database)/documents/queues/$(queueId)).data.barberId == request.auth.uid)
       );
 
       match /customers/{entryId} {
@@ -131,13 +130,16 @@ service cloud.firestore {
                 )
           );
         allow update: if isVerified() && isValidId(entryId) && (
-          // Customer can update their own entry
-          (existing().customerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'cancelledAt', 'cancelledReason'])) ||
-          // Barber who owns the queue or any barber (for shared shops) can manage entries
+          // Customer can ONLY cancel their own entry (terminating standby sequence)
+          (
+            existing().customerId == request.auth.uid 
+            && incoming().status == 'cancelled'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'cancelledAt'])
+          ) ||
+          // Barber who owns the queue can manage entries
           (
             (
-              (exists(/databases/$(database)/documents/queues/$(queueId)) && get(/databases/$(database)/documents/queues/$(queueId)).data.barberId == request.auth.uid) || 
-              isBarber()
+              (exists(/databases/$(database)/documents/queues/$(queueId)) && get(/databases/$(database)/documents/queues/$(queueId)).data.barberId == request.auth.uid)
             ) && 
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'cancelledAt', 'cancelledReason'])
           )
@@ -147,7 +149,11 @@ service cloud.firestore {
 
     match /bookings/{bookingId} {
       allow list, get: if isVerified() && (resource.data.barberId == request.auth.uid || resource.data.customerId == request.auth.uid);
-      allow create: if isVerified() && isValidId(bookingId) && (incoming().barberId == request.auth.uid || incoming().customerId == request.auth.uid) && isValidBooking(incoming());
+      allow create: if isVerified() && isValidId(bookingId) && 
+        (
+          (incoming().customerId == request.auth.uid) ||
+          (isBarber() && incoming().barberId == request.auth.uid)
+        ) && isValidBooking(incoming());
       allow update: if isVerified() && (resource.data.barberId == request.auth.uid || resource.data.customerId == request.auth.uid)
                        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'cancelledAt', 'appointmentDate']);
     }

@@ -47,7 +47,6 @@ import { BarberQueueScreen } from './screens/BarberQueueScreen';
 import { AnalyticsScreen } from './screens/AnalyticsScreen';
 import { BookingScreen } from './screens/BookingScreen';
 import { BarberListScreen } from './screens/BarberListScreen';
-import { AISuggestionScreen } from './screens/AISuggestionScreen';
 import { BookingHistoryScreen } from './screens/BookingHistoryScreen';
 
 // --- Components ---
@@ -66,15 +65,9 @@ const Navbar = ({ activeTab, setActiveTab, role }: { activeTab: string, setActiv
         { id: 'profile', label: 'Systems', icon: User },
       ];
 
-  const clientTabsWithAI = role === 'customer' ? [
-    ...tabs.slice(0, -1),
-    { id: 'ai', label: 'Counsel', icon: Sparkles },
-    tabs[tabs.length - 1]
-  ] : tabs;
-
   return (
     <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 px-6 py-4 pb-10 flex justify-around items-center z-50">
-      {clientTabsWithAI.map((tab) => {
+      {tabs.map((tab) => {
         const Icon = tab.icon;
         const isActive = activeTab === tab.id;
         return (
@@ -118,6 +111,9 @@ const Landing = () => {
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tighter uppercase text-slate-900">The Sharp Edge</h1>
             <p className="text-[10px] text-stone-500 uppercase tracking-[0.3em] font-bold">Professional Grooming Systems</p>
+            <p className="text-[9px] text-stone-400 font-mono mt-2 select-all uppercase">
+              TrimTime Build Verification - 2026-06-24T12:09:22-07:00
+            </p>
           </div>
         </div>
         <Button 
@@ -781,12 +777,6 @@ const ProfileView = () => {
             Active Alerts
           </Button>
         )}
-        <Button variant="outline" className="w-full h-14 justify-start px-8">
-          Preferences
-        </Button>
-        <Button variant="outline" className="w-full h-14 justify-start px-8">
-          Archive
-        </Button>
         <Button 
           variant="ghost" 
           onClick={logout} 
@@ -865,11 +855,6 @@ const MainApp = () => {
               {activeTab === 'profile' && (
                 <motion.div key="profile" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}>
                   <ProfileView />
-                </motion.div>
-              )}
-              {activeTab === 'ai' && (
-                <motion.div key="ai" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}>
-                  <AISuggestionScreen />
                 </motion.div>
               )}
             </AnimatePresence>
